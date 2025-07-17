@@ -19,7 +19,7 @@ def setup(app):
 project = "cellpick"
 copyright = "2025, Lucas Miranda, Paolo Pellizzoni"
 author = "Lucas Miranda, Paolo Pellizzoni"
-release = "2025.7.19"
+release = "2025.7.22"
 
 # -- General configuration ---------------------------------------------------
 

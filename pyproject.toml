@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cellpick"
-version = "2025.7.19"
+version = "2025.7.22"
 description = "An interactive cell selection tool for spatial omics"
 authors = ["Lucas Miranda, Paolo Pellizzoni"]
 license = "BSD3"
@@ -46,7 +46,7 @@ twine = "^6.1.0"
 bumpver = "^2025.1131"
 
 [tool.bumpver]
-current_version = "2025.7.19"
+current_version = "2025.7.22"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "Bump version: {old_version} → {new_version}"
 tag_message = "v{new_version}"
