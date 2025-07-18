@@ -5,6 +5,8 @@
 import os
 import sys
 
+# Add the project root to the Python path
+sys.path.insert(0, os.path.abspath("../.."))
 sys.path.insert(0, os.path.abspath("../../cellpick"))
 
 
@@ -30,9 +32,6 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.doctest",
-    "sphinxarg.ext",
-    "sphinx_rtd_theme",
-    "sphinx_design",
     "sphinx_copybutton",
 ]
 exclude_patterns = []
@@ -50,7 +49,34 @@ exclude_patterns = [
 ]
 
 # autodoc_mock_imports = []
-autodoc_mock_imports = []  # type: ignore
+autodoc_mock_imports = [
+    "numpy",
+    "pandas", 
+    "matplotlib",
+    "matplotlib.image",
+    "matplotlib.pyplot",
+    "PIL",
+    "PIL.Image",
+    "untangle",
+    "lxml",
+    "lxml.etree",
+    "scipy",
+    "scipy.interpolate",
+    "tqdm",
+    "skimage",
+    "shapely",
+    "shapely.geometry",
+    "czifile",
+    "tifffile",
+    "PySide6",
+    "PySide6.QtCore",
+    "PySide6.QtGui", 
+    "PySide6.QtWidgets",
+    "PySide6.QtSvg",
+    "PySide6.QtSvgWidgets",
+    "qt_material",
+    "imagecodecs",
+]  # type: ignore
 
 # -- Options for HTML output -------------------------------------------------
 
@@ -65,6 +91,8 @@ html_theme_options = {
     "logo": {
         "image_light": "../../cellpick/assets/logo.svg",
     },
+    "use_issues_button": False,
+    "use_repository_button": False,
 }
 
 html_title = "CellPick"
@@ -76,7 +104,14 @@ html_static_path = ["_static"]
 
 autodoc_default_options = {
     "member-order": "bysource",
+    "undoc-members": True,
+    "show-inheritance": True,
 }
+
+# Additional autodoc settings for better RTD compatibility
+autodoc_typehints = "description"
+autodoc_typehints_format = "short"
+autodoc_preserve_defaults = True
 
 html_favicon = "../../cellpick/assets/logo-small.svg"
 html_logo = "../../cellpick/assets/logo-small.svg"

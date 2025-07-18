@@ -1,7 +1,4 @@
 sphinx
-sphinx_rtd_theme
 myst-parser
-sphinx-argparse
-sphinx-design
 sphinx-copybutton
 sphinx-book-theme 
