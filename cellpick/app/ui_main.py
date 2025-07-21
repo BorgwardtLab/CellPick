@@ -1,34 +1,77 @@
-import importlib.resources
 import math
 import os
 import sys
 import xml.etree.ElementTree as ET
+from pathlib import Path
 from typing import Any, List, Optional
 
 import lxml.etree as etree
 import numpy as np
 import pandas as pd
 from czifile import imread as cziimread
-from PySide6.QtCore import (QBuffer, QByteArray, QIODevice, QObject, QPointF,
-                            QRectF, Qt, QThread, Signal, Slot)
-from PySide6.QtGui import (QColor, QFont, QIcon, QImage, QMouseEvent, QPainter,
-                           QPen, QPixmap, QPolygonF)
+from pathlib import Path
+from PySide6.QtCore import (
+    QBuffer,
+    QByteArray,
+    QIODevice,
+    QObject,
+    QPointF,
+    QRectF,
+    Qt,
+    QThread,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QIcon,
+    QImage,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtSvgWidgets import QSvgWidget
-from PySide6.QtWidgets import (QApplication, QCheckBox, QColorDialog,
-                               QComboBox, QFileDialog, QGraphicsPixmapItem,
-                               QGraphicsPolygonItem, QGraphicsScene,
-                               QGraphicsView, QGroupBox, QHBoxLayout,
-                               QInputDialog, QLabel, QMainWindow, QMessageBox,
-                               QProgressDialog, QPushButton, QScrollArea,
-                               QSizePolicy, QSlider, QSpacerItem, QSpinBox,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QColorDialog,
+    QComboBox,
+    QFileDialog,
+    QGraphicsPixmapItem,
+    QGraphicsPolygonItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QGroupBox,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QProgressDialog,
+    QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QSlider,
+    QSpacerItem,
+    QSpinBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 from tifffile import imread as tifimread
 
 from .components import CHANNEL_COLORS, AppState, AppStateManager, Polygon
 from .image_viewer import ImageViewer
-from .ui_components import (AnimatedButton, ClickableColorLabel,
-                            ClickableLabel, ProgressDialog)
+from .ui_components import (
+    AnimatedButton,
+    ClickableColorLabel,
+    ClickableLabel,
+    ProgressDialog,
+)
 from .utils import ImXML
 
 if sys.platform == "darwin":
@@ -36,7 +79,10 @@ if sys.platform == "darwin":
         import tempfile
 
         from AppKit import NSApplication, NSImage
-        with importlib.resources.files("cellpick.assets").joinpath("logo.png").open("rb") as f:
+
+        current_dir = Path(__file__).parent.parent
+        logo_path = current_dir / "assets" / "logo.png"
+        with open(logo_path, "rb") as f:
             tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".png")
             tmp.write(f.read())
             tmp.close()
@@ -85,13 +131,19 @@ class SelectionPage(QWidget):
         self.channel_control_panel = ScrollableContainer(height=120)
         button_panel1 = QGroupBox("Load Image")
         button_layout1 = QVBoxLayout(button_panel1)
-        button_panel2 = QGroupBox("Brightness")
+        button_panel2 = QGroupBox("Image Adjustments")
         button_layout2 = QVBoxLayout(button_panel2)
-        self.add_channel_btn = AnimatedButton("Add Channel")
-        self.load_shapes_btn = AnimatedButton("Load Shapes")
+        button_panel3 = QGroupBox("Cell Shapes")
+        button_layout3 = QVBoxLayout(button_panel3)
+        self.add_channel_btn = AnimatedButton("Add channel")
+        self.load_shapes_btn = AnimatedButton("Load from file")
+        self.select_shape_color_btn = AnimatedButton("Select color")
         self.gamma_slider = QSlider(Qt.Horizontal)
         self.gamma_slider.setRange(-100, 100)
         self.gamma_slider.setValue(0)
+        self.contrast_slider = QSlider(Qt.Horizontal)
+        self.contrast_slider.setRange(-100, 100)
+        self.contrast_slider.setValue(0)
         self.refresh_btn = AnimatedButton("Refresh")
         self.reset_btn = AnimatedButton("Reset view")
         self.next_btn = AnimatedButton(
@@ -99,16 +151,38 @@ class SelectionPage(QWidget):
         )
         button_layout1.addWidget(self.add_channel_btn)
         button_layout1.addWidget(self.channel_control_panel)
+        button_layout2.addWidget(QLabel("Brightness"))
         button_layout2.addWidget(self.gamma_slider)
+        button_layout2.addWidget(QLabel("Contrast"))
+        button_layout2.addWidget(self.contrast_slider)
         button_layout2.addWidget(self.refresh_btn)
+        button_layout3.addWidget(self.load_shapes_btn)
+        button_layout3.addWidget(self.select_shape_color_btn)
         layout.addWidget(button_panel1)
         layout.addWidget(button_panel2)
-        layout.addWidget(self.load_shapes_btn)
+        layout.addWidget(button_panel3)
         layout.addWidget(self.reset_btn)
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.next_btn)
         self.buttons = self.findChildren(AnimatedButton)
         self.buttons.append(self.gamma_slider)
+        self.buttons.append(self.contrast_slider)
+        self.select_shape_color_btn.clicked.connect(self.pick_shape_color)
+
+    def pick_shape_color(self):
+        # Robustly find the MainWindow and use its shape_outline_color
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, "shape_outline_color"):
+            main_window = main_window.parent()
+        if main_window and hasattr(main_window, "shape_outline_color"):
+            color = QColorDialog.getColor(
+                main_window.shape_outline_color, self, "Select shape outline color"
+            )
+            if color.isValid():
+                main_window.shape_outline_color = color
+            # Repaint shapes with the selected color
+            if hasattr(main_window, "image_viewer"):
+                main_window.image_viewer.update_polygon_display()
 
 
 class ActionPage(QWidget):
@@ -227,6 +301,7 @@ class MainWindow(QMainWindow):
     channel_control: QVBoxLayout
     _shape_loader_thread: QThread = None
     _shape_loader_worker: QObject = None
+    shape_outline_color: QColor
 
     def __init__(self) -> None:
         super().__init__()
@@ -235,8 +310,10 @@ class MainWindow(QMainWindow):
         self.state = AppStateManager()
         self.state.main_window = self
         self.setWindowTitle("CellPick")
-        # Set window icon using importlib.resources
-        with importlib.resources.files("cellpick.assets").joinpath("logo.svg").open("rb") as f:
+        # Set window icon
+        current_dir = Path(__file__).parent.parent
+        logo_svg_path = current_dir / "assets" / "logo.svg"
+        with open(logo_svg_path, "rb") as f:
             svg_bytes = f.read()
         # QIcon does not support SVG directly from bytes, so use QPixmap if possible
         # If you want to use SVG as icon, you may need to convert it to PNG or use QSvgWidget for display
@@ -267,8 +344,10 @@ class MainWindow(QMainWindow):
         self.logo = QWidget()
         self.scale = 1.0
         hcenter_layout = QHBoxLayout(self.logo)
-        # Use importlib.resources for SVG logo
-        with importlib.resources.files("cellpick.assets").joinpath("logo.svg").open("rb") as f:
+        # Import SVG logo
+        current_dir = Path(__file__).parent.parent
+        logo_svg_path = current_dir / "assets" / "logo.svg"
+        with open(logo_svg_path, "rb") as f:
             svg_bytes = f.read()
         svg_widget = QSvgWidget()
         svg_widget.load(svg_bytes)
@@ -282,7 +361,8 @@ class MainWindow(QMainWindow):
         self.page2.back_btn.clicked.connect(self.goto_first_page)
         self.page1.load_shapes_btn.clicked.connect(self.load_shapes)
         self.page1.add_channel_btn.clicked.connect(self.add_channel)
-        self.page1.gamma_slider.valueChanged.connect(self.update_brightness)
+        self.page1.gamma_slider.valueChanged.connect(self.update_gamma)
+        self.page1.contrast_slider.valueChanged.connect(self.update_contrast)
         self.page1.refresh_btn.clicked.connect(self.image_viewer.update_display)
         self.page1.reset_btn.clicked.connect(self.reset_view)
         self.page2.add_lnd_btn.clicked.connect(self.toggle_landmark_selection)
@@ -303,6 +383,7 @@ class MainWindow(QMainWindow):
         self.state.state = AppState.MAIN
         self.reset_main_buttons()
         self.state.state = AppState.HOME
+        self.shape_outline_color = QColor(255, 255, 255)
 
     def goto_first_page(self) -> None:
         self.state.state = AppState.HOME
@@ -312,8 +393,12 @@ class MainWindow(QMainWindow):
         self.state.state = AppState.MAIN
         self.stack.setCurrentWidget(self.page2)
 
-    def update_brightness(self, value: int) -> None:
+    def update_gamma(self, value: int) -> None:
         self.image_viewer.gamma = np.exp(value / 20.0)
+
+    def update_contrast(self, value: int) -> None:
+        # Map slider value (-100 to 100) to contrast factor (0.5 to 2.0)
+        self.image_viewer.contrast = 1.0 + value / 100.0
 
     def reset_view(self) -> None:
         factor = 1.0 / self.image_viewer.graphics_view.zoom_factor
@@ -593,6 +678,13 @@ class MainWindow(QMainWindow):
                     self.state.shapes.append(polygon)
             self.image_viewer.update_polygon_display()
             progress_dialog.setValue(total)
+
+            # Repaint shapes with the current color (default or user-selected)
+            main_window = self.parent()
+            while main_window and not hasattr(main_window, "image_viewer"):
+                main_window = main_window.parent()
+            if main_window and hasattr(main_window, "image_viewer"):
+                main_window.image_viewer.update_polygon_display()
 
         except Exception as e:
             print(f"Error parsing XML: {e}")

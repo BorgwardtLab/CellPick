@@ -6,8 +6,13 @@ import numpy as np
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QColor, QPolygonF
 
-from .algorithms import (dist_to_polygon, gonzalez_k_center, polygon_gonzalez,
-                         polygon_round_robin_gonzalez, round_robin_gonzalez)
+from .algorithms import (
+    dist_to_polygon,
+    gonzalez_k_center,
+    polygon_gonzalez,
+    polygon_round_robin_gonzalez,
+    round_robin_gonzalez,
+)
 
 CHANNEL_COLORS = [
     np.array([255, 255, 255]),

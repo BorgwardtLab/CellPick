@@ -1,7 +1,7 @@
-import importlib.resources
 import os
 import sys
 
+from pathlib import Path
 from PySide6.QtCore import QFile
 from PySide6.QtGui import QColor, QFontDatabase, QGuiApplication, QPalette, Qt
 from PySide6.QtWidgets import QApplication
@@ -15,7 +15,9 @@ def main() -> int:
     app = QApplication(sys.argv)
     QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Light)
 
-    with importlib.resources.files("cellpick.assets").joinpath("Roboto-Regular.ttf").open("rb") as f:
+    current_dir = Path(__file__).parent  # This is the cellpick/ directory
+    font_path = current_dir / "assets" / "Roboto-Regular.ttf"
+    with open(font_path, "rb") as f:
         font_bytes = f.read()
     font_id = QFontDatabase.addApplicationFontFromData(font_bytes)
     window = MainWindow()

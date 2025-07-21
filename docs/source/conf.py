@@ -21,7 +21,7 @@ def setup(app):
 project = "cellpick"
 copyright = "2025, Lucas Miranda, Paolo Pellizzoni"
 author = "Lucas Miranda, Paolo Pellizzoni"
-release = "2025.7.22"
+release = "0.1.0"
 
 # -- General configuration ---------------------------------------------------
 
@@ -51,7 +51,7 @@ exclude_patterns = [
 # autodoc_mock_imports = []
 autodoc_mock_imports = [
     "numpy",
-    "pandas", 
+    "pandas",
     "matplotlib",
     "matplotlib.image",
     "matplotlib.pyplot",
@@ -70,7 +70,7 @@ autodoc_mock_imports = [
     "tifffile",
     "PySide6",
     "PySide6.QtCore",
-    "PySide6.QtGui", 
+    "PySide6.QtGui",
     "PySide6.QtWidgets",
     "PySide6.QtSvg",
     "PySide6.QtSvgWidgets",

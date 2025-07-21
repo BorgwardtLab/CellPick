@@ -1,14 +1,39 @@
 from copy import deepcopy
 from typing import Any, List, Optional, Tuple
 
-from PySide6.QtCore import (QEasingCurve, QPointF, QPropertyAnimation, QRect,
-                            QRectF, Qt, Signal)
-from PySide6.QtGui import (QColor, QImage, QMouseEvent, QPainter, QPen,
-                           QPixmap, QPolygonF)
-from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QGraphicsItem,
-                               QGraphicsProxyWidget, QGraphicsScene,
-                               QGraphicsView, QGraphicsWidget, QLabel,
-                               QProgressBar, QPushButton, QVBoxLayout, QWidget)
+from PySide6.QtCore import (
+    QEasingCurve,
+    QPointF,
+    QPropertyAnimation,
+    QRect,
+    QRectF,
+    Qt,
+    Signal,
+)
+from PySide6.QtGui import (
+    QColor,
+    QImage,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QFrame,
+    QGraphicsItem,
+    QGraphicsProxyWidget,
+    QGraphicsScene,
+    QGraphicsView,
+    QGraphicsWidget,
+    QLabel,
+    QProgressBar,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class AnimatedButton(QPushButton):

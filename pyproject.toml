@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "cellpick"
-version = "2025.7.22"
+version = "0.1.0"
 description = "An interactive cell selection tool for spatial omics"
 authors = ["Lucas Miranda, Paolo Pellizzoni"]
 license = "BSD3"
@@ -14,29 +14,27 @@ include = ["cellpick/assets/*"]
 cellpick = "cellpick.__main__:main"
 
 [tool.poetry.dependencies]
-python = ">=3.11,<3.14"
-scikit-image = "^0.25.2"
+python = ">=3.9,<3.14"
+scikit-image = "^0.24.0"
 tifffile = "2024.8.30"
 untangle = "^1.2.1"
-matplotlib = "^3.10.3"
 pandas = "^2.3.0"
 lxml = "^5.4.0"
 tqdm = "^4.67.1"
 pyside6 = "^6.9.1"
 qt-material = "^2.17"
-shapely = "^2.1.1"
+shapely = ">=2.0.7"
 czifile = "^2019.7.2.1"
 pyobjc = {version = "^11.1", markers = "sys_platform == 'darwin'"}
 imagecodecs = "2024.12.30"
-numpy = "^2.3.1"
+numpy = ">=2.0.2"
 
 [tool.poetry.group.dev.dependencies]
 black = "^25.1.0"
 isort = "^6.0.1"
-sphinx = "^8.2.3"
+sphinx = ">=7.4.7"
 autodoc = "^0.5.0"
-sphinx-argparse = "^0.5.2"
-sphinx-rtd-theme = "^3.0.2"
+sphinx-argparse = ">=0.4.0"
 sphinx-design = "^0.6.1"
 sphinx-copybutton = "^0.5.2"
 sphinx-gallery = "^0.19.0"
@@ -46,7 +44,7 @@ twine = "^6.1.0"
 bumpver = "^2025.1131"
 
 [tool.bumpver]
-current_version = "2025.7.22"
+current_version = "0.1.0"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message = "Bump version: {old_version} → {new_version}"
 tag_message = "v{new_version}"

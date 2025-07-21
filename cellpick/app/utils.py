@@ -1,7 +1,5 @@
 from typing import Any, List, Optional, Tuple, Union
 
-import matplotlib.image
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import PIL

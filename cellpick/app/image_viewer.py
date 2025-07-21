@@ -7,12 +7,25 @@ import pandas as pd
 import skimage
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
-from PySide6.QtWidgets import (QApplication, QCheckBox, QFileDialog,
-                               QGraphicsItem, QGraphicsPixmapItem,
-                               QGraphicsPolygonItem, QGraphicsScene,
-                               QGraphicsView, QHBoxLayout, QLabel, QMainWindow,
-                               QMessageBox, QPushButton, QScrollArea, QSlider,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QFileDialog,
+    QGraphicsItem,
+    QGraphicsPixmapItem,
+    QGraphicsPolygonItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QSlider,
+    QVBoxLayout,
+    QWidget,
+)
 from shapely.geometry import MultiPoint
 
 from .components import CHANNEL_COLORS, AppState, ImageChannel, Polygon
@@ -68,7 +81,7 @@ class ImageViewer(QWidget):
     state: Any
     channels: List[ImageChannel]
     composite_image: Optional[np.ndarray]
-    gamma: float
+    brightness: float
     height: Optional[int]
     width: Optional[int]
     shape_items: List[QGraphicsPolygonItem]
@@ -85,6 +98,7 @@ class ImageViewer(QWidget):
         self.channels: List[ImageChannel] = []
         self.composite_image: Optional[np.ndarray] = None
         self.gamma: float = 1.0
+        self.contrast: float = 1.0
         self.height: Optional[int] = None
         self.width: Optional[int] = None
         self.shape_items: List[QGraphicsPolygonItem] = []
@@ -120,23 +134,24 @@ class ImageViewer(QWidget):
 
     def update_display(self) -> None:
         composite = np.zeros((self.height, self.width, 3), dtype=np.float32)
-        cnt_visible = 1e-9
         for channel in self.channels:
             if channel.visible:
-                cnt_visible += 1
                 channel_data = channel.image_data.astype(np.float32)
                 channel_data /= np.max(channel_data) if np.max(channel_data) > 0 else 1
                 if abs(self.gamma - 1.0) > 1e-9:
                     channel_data = skimage.exposure.adjust_gamma(
                         channel_data, 1.0 / self.gamma
                     )
+                # Apply contrast adjustment: out = (in - 0.5) * contrast + 0.5
+                channel_data = np.clip((channel_data - 0.5) * self.contrast + 0.5, 0, 1)
                 # Use custom color if available, otherwise use default color
                 if channel.custom_color is not None:
                     color = channel.custom_color
                 else:
                     color = CHANNEL_COLORS[channel.color_idx % len(CHANNEL_COLORS)]
                 composite += channel_data[..., None] * color[None, None, :]
-        composite = (composite / cnt_visible).astype(np.uint8)
+        composite = np.clip(composite, 0, 255).astype(np.uint8)
+        self.composite_image = composite  # Store for shape color contrast
         h, w, _ = composite.shape
         bytes_per_line = 3 * w
         qimage = QImage(composite.data, w, h, bytes_per_line, QImage.Format_RGB888)
@@ -148,33 +163,39 @@ class ImageViewer(QWidget):
             self.graphics_view.scene.removeItem(item)
         self.shape_items = []
 
-        # Check if there are any selected shapes
+        # Use the selected shape outline color from the MainWindow
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, "shape_outline_color"):
+            main_window = main_window.parent()
+        if main_window and hasattr(main_window, "shape_outline_color"):
+            shape_outline_color = main_window.shape_outline_color
+        else:
+            shape_outline_color = QColor(0, 255, 0)
+
         has_selected_shapes = len(self.state.selected_shape_ids) > 0
 
         for idx, polygon in enumerate(self.state.shapes):
-            color = deepcopy(polygon.color)
-
-            # Check if this polygon is selected
+            # Use gradient color if shape has a score, otherwise use user-selected color
+            if polygon.score is not None:
+                color = QColor(polygon.color)
+            else:
+                color = QColor(shape_outline_color)
             is_selected = idx in self.state.selected_shape_ids
 
             if is_selected:
-                # Selected shapes: normal brightness and thicker pen
                 color.setAlpha(200)
                 color.setRed(min(255, color.red() + 50))
                 color.setGreen(min(255, color.green() + 50))
                 color.setBlue(min(255, color.blue() + 50))
                 pen_width = 4
             else:
-                # Unselected shapes: reduced brightness when there are selected shapes
                 if has_selected_shapes:
-                    # Reduce brightness by 30% when there are selected shapes
-                    color.setAlpha(140)  # Reduced from 200 to 140
-                    color.setRed(max(0, int(color.red() * 0.7)))  # Reduce by 30%
-                    color.setGreen(max(0, int(color.green() * 0.7)))  # Reduce by 30%
-                    color.setBlue(max(0, int(color.blue() * 0.7)))  # Reduce by 30%
-                    pen_width = 1  # Thinner pen for unselected shapes
+                    color.setAlpha(140)
+                    color.setRed(max(0, int(color.red() * 0.7)))
+                    color.setGreen(max(0, int(color.green() * 0.7)))
+                    color.setBlue(max(0, int(color.blue() * 0.7)))
+                    pen_width = 1
                 else:
-                    # Normal brightness when no shapes are selected
                     color.setAlpha(200)
                     color.setRed(min(255, color.red() + 50))
                     color.setGreen(min(255, color.green() + 50))
