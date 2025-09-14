@@ -416,7 +416,7 @@ class MainWindow(QMainWindow):
             if file_path[-3:] == "czi":
                 image_data = cziimread(file_path).squeeze()
             else:
-                image_data = tifimread(file_path)
+                image_data = tifimread(file_path).squeeze()
 
             if len(image_data.shape) not in [2, 3]:
                 QMessageBox.warning(self, "Error", "Image must be 2D or 3D")
