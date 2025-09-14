@@ -423,7 +423,10 @@ class MainWindow(QMainWindow):
                 return
             if len(image_data.shape) == 2:
                 image_data = image_data[..., None]
-
+            
+            ch_idx = np.argmin(image_data.shape)
+            image_data = np.moveaxis(image_data, ch_idx, -1) # now it's (H, W, C)
+            
             # Downsample image to full HD resolution (minimum side 1080px, keep aspect ratio)
             max_side = max(image_data.shape[0], image_data.shape[1])
             if max_side > self.image_resolution:
