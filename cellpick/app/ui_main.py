@@ -637,8 +637,8 @@ class MainWindow(QMainWindow):
         try:
             meta = pd.read_csv(meta_path, sep="\t")
             calibration = meta.iloc[0, 0]
-            self.im_xml = ImXML(meta_path, xml_path, self.channels[0])
-            self.im_xml.load_image()
+            self.im_xml = ImXML(meta_path, xml_path, '')
+            self.im_xml.im_shape = self.image_viewer.channels[0].image_data.shape
             self.im_xml.calibration(calibration)
             self.state.reset_shapes()
             total = self.im_xml.dvpxml.n_shapes
