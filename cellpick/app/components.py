@@ -3,7 +3,7 @@ from enum import Enum, auto
 from typing import Any, List, Optional
 
 import numpy as np
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QPolygonF
 
 from .algorithms import (
@@ -126,6 +126,7 @@ class AppState(Enum):
     DELETING_AR = auto()
     ADDING_SHP = auto()
     DELETING_SHP = auto()
+    SELECTING_CLB = auto()
 
 
 class AppStateManager:
@@ -181,6 +182,7 @@ class AppStateManager:
         self.current_lnd_points: List[QPointF] = []
         self.active_regions: List[List[QPointF]] = []
         self.current_ar_points: List[QPointF] = []
+        self.calibration_points: List[QPointF] = []
 
     def to_home(self) -> None:
         """
@@ -548,3 +550,25 @@ class AppStateManager:
             shape.score = None
             shape.set_color()
         self.image_viewer.update_polygon_display()
+    
+    def start_calibration_selection(self) -> None:
+        self.calibration_points = []
+        self.image_viewer.remove_calibration_items()
+        self.state = AppState.SELECTING_CLB
+        
+
+    def end_calibration_selection(self) -> None:
+        self.state = AppState.ADV_HOME
+        self.image_viewer.remove_calibration_items()
+    
+    def add_calibration_point(self, scene_pos: QPointF) -> None:
+        self.calibration_points.append(scene_pos)
+        self.image_viewer.add_calibration_item(scene_pos, len(self.calibration_points)-1)
+        if len(self.calibration_points) == 3:
+            self.state = AppState.ADV_HOME
+            self.main_window.page1.manual_calibration_btn.setText("Manual calibration")
+            self.main_window.enable_adv_home_buttons()
+            # if self.main_window.xml_path is not None:
+            #     QTimer.singleShot(10, self.main_window.load_shapes_and_manual_calibrate)
+                
+    

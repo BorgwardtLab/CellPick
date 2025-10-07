@@ -89,6 +89,7 @@ class ImageViewer(QWidget):
     lnd_preview_item: Optional[QGraphicsItem]
     ar_items: List[QGraphicsPolygonItem]
     ar_preview_item: Optional[QGraphicsItem]
+    calibration_items: List[QGraphicsPolygonItem]
     graphics_view: ZoomableGraphicsView
 
     def __init__(self, state: Any) -> None:
@@ -106,6 +107,7 @@ class ImageViewer(QWidget):
         self.lnd_preview_item: Optional[QGraphicsItem] = None
         self.ar_items: List[QGraphicsPolygonItem] = []
         self.ar_preview_item: Optional[QGraphicsItem] = None
+        self.calibration_items = []
         layout = QVBoxLayout(self)
         self.graphics_view = ZoomableGraphicsView()
         layout.addWidget(self.graphics_view)
@@ -225,6 +227,8 @@ class ImageViewer(QWidget):
                 self.state.try_adding_shp(scene_pos)
             if self.state.state == AppState.DELETING_SHP:
                 self.state.try_deleting_shp(scene_pos)
+            if self.state.state == AppState.SELECTING_CLB:
+                self.state.add_calibration_point(scene_pos)
 
     def update_lnd_preview(self, points: List[QPointF]) -> None:
         if self.lnd_preview_item:
@@ -290,3 +294,24 @@ class ImageViewer(QWidget):
         item = self.ar_items.pop(idx)
         self.graphics_view.scene.removeItem(item)
         self.update()
+    
+    # Calibration
+    def add_calibration_item(self, point: QPointF, idx: int):
+        x, y = point.x(), point.y()
+        poly = [ QPointF(x-5, y-100), QPointF(x+5, y-100), QPointF(x+5, y-5), QPointF(x+100, y-5), QPointF(x+100, y+5), QPointF(x+5, y+5), QPointF(x+5, y+100), QPointF(x-5, y+100), QPointF(x-5, y+5), QPointF(x-100, y+5), QPointF(x-100, y-5), QPointF(x-5, y-5) ]
+        poly_item = QGraphicsPolygonItem(QPolygonF(poly))
+        poly_item.setPen(QPen(Qt.white, 3))
+        if idx == 0: poly_item.setBrush(QColor(255, 0, 0, 255))
+        if idx == 1: poly_item.setBrush(QColor(0, 255, 0, 255))
+        if idx == 2: poly_item.setBrush(QColor(0, 0, 255, 255))
+        poly_item.setZValue(1)
+        self.graphics_view.scene.addItem(poly_item)
+        self.calibration_items.append(poly_item)
+        self.update()
+    
+    def remove_calibration_items(self):
+        for item in self.calibration_items:
+            self.graphics_view.scene.removeItem(item)
+        self.calibration_items = []
+        self.update()
+
