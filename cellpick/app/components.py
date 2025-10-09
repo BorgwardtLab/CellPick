@@ -566,7 +566,7 @@ class AppStateManager:
         self.image_viewer.add_calibration_item(scene_pos, len(self.calibration_points)-1)
         if len(self.calibration_points) == 3:
             self.state = AppState.ADV_HOME
-            self.main_window.page1.manual_calibration_btn.setText("Manual calibration")
+            self.main_window.page1.manual_calibration_btn.setText("Manual")
             self.main_window.enable_adv_home_buttons()
             # if self.main_window.xml_path is not None:
             #     QTimer.singleShot(10, self.main_window.load_shapes_and_manual_calibrate)
