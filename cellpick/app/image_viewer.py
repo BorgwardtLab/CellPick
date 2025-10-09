@@ -298,9 +298,9 @@ class ImageViewer(QWidget):
     # Calibration
     def add_calibration_item(self, point: QPointF, idx: int):
         x, y = point.x(), point.y()
-        poly = [ QPointF(x-5, y-100), QPointF(x+5, y-100), QPointF(x+5, y-5), QPointF(x+100, y-5), QPointF(x+100, y+5), QPointF(x+5, y+5), QPointF(x+5, y+100), QPointF(x-5, y+100), QPointF(x-5, y+5), QPointF(x-100, y+5), QPointF(x-100, y-5), QPointF(x-5, y-5) ]
+        poly = [ QPointF(x-2, y-100), QPointF(x+2, y-100), QPointF(x+2, y-2), QPointF(x+100, y-2), QPointF(x+100, y+2), QPointF(x+2, y+2), QPointF(x+2, y+100), QPointF(x-2, y+100), QPointF(x-2, y+2), QPointF(x-100, y+2), QPointF(x-100, y-2), QPointF(x-2, y-2) ]
         poly_item = QGraphicsPolygonItem(QPolygonF(poly))
-        poly_item.setPen(QPen(Qt.white, 3))
+        poly_item.setPen(QPen(Qt.white, 2))
         if idx == 0: poly_item.setBrush(QColor(255, 0, 0, 255))
         if idx == 1: poly_item.setBrush(QColor(0, 255, 0, 255))
         if idx == 2: poly_item.setBrush(QColor(0, 0, 255, 255))
