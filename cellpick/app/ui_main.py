@@ -729,10 +729,7 @@ class MainWindow(QMainWindow):
                     all_shapes = []  # Discard all loaded shapes if cancelled
                     break
 
-            # Downscale shape size to match image resolution
-            for s, shape in enumerate(all_shapes):
-                for c, coordinate in enumerate(shape):
-                    all_shapes[s][c] = coordinate * self.scale
+            # Downscaling shape size to match image resolution is not needed for manual
 
             for shape_idx, shape in enumerate(all_shapes):
                 points = [QPointF(int(x), int(y)) for x, y in zip(*shape)]
