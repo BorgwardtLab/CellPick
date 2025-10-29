@@ -7,6 +7,7 @@ from typing import Any, List, Optional
 
 import lxml.etree as etree
 import numpy as np
+from scipy import interpolate
 import pandas as pd
 from czifile import imread as cziimread
 from pathlib import Path
@@ -72,7 +73,7 @@ from .ui_components import (
     ClickableLabel,
     ProgressDialog,
 )
-from .utils import ImXML
+from .utils import ImXML, DVPXML, export_xml, export_landmarks_xml, export_ar_xml
 
 if sys.platform == "darwin":
     try:
@@ -135,8 +136,13 @@ class SelectionPage(QWidget):
         button_layout2 = QVBoxLayout(button_panel2)
         button_panel3 = QGroupBox("Cell Shapes")
         button_layout3 = QVBoxLayout(button_panel3)
+        button_panel4 = QGroupBox("Calibration")
+        button_layout4 = QVBoxLayout(button_panel4)
         self.add_channel_btn = AnimatedButton("Add channel")
-        self.load_shapes_btn = AnimatedButton("Load from file")
+        self.load_shapes_btn = AnimatedButton("Load shapes")
+        self.load_calibration_btn = AnimatedButton("Load File", size=(32, 96))
+        self.manual_calibration_btn = AnimatedButton("Manual", size=(32, 96))
+        self.confirm_calibration_btn = AnimatedButton("Calibrate")
         self.select_shape_color_btn = AnimatedButton("Select color")
         self.gamma_slider = QSlider(Qt.Horizontal)
         self.gamma_slider.setRange(-100, 100)
@@ -158,9 +164,20 @@ class SelectionPage(QWidget):
         button_layout2.addWidget(self.refresh_btn)
         button_layout3.addWidget(self.load_shapes_btn)
         button_layout3.addWidget(self.select_shape_color_btn)
+        
+        subwidget1 = QWidget()
+        sublayout1 = QHBoxLayout(subwidget1)
+        sublayout1.setContentsMargins(0, 0, 0, 0)
+        sublayout1.setSpacing(8)
+        sublayout1.addWidget(self.load_calibration_btn)
+        sublayout1.addWidget(self.manual_calibration_btn)
+        button_layout4.addWidget(subwidget1)
+        button_layout4.addWidget(self.confirm_calibration_btn)
+
         layout.addWidget(button_panel1)
         layout.addWidget(button_panel2)
         layout.addWidget(button_panel3)
+        layout.addWidget(button_panel4)
         layout.addWidget(self.reset_btn)
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.next_btn)
@@ -302,6 +319,7 @@ class MainWindow(QMainWindow):
     _shape_loader_thread: QThread = None
     _shape_loader_worker: QObject = None
     shape_outline_color: QColor
+    xml_path, meta_path = None, None
 
     def __init__(self) -> None:
         super().__init__()
@@ -360,6 +378,9 @@ class MainWindow(QMainWindow):
         self.page1.next_btn.clicked.connect(self.goto_second_page)
         self.page2.back_btn.clicked.connect(self.goto_first_page)
         self.page1.load_shapes_btn.clicked.connect(self.load_shapes)
+        self.page1.load_calibration_btn.clicked.connect(self.load_calibration)
+        self.page1.manual_calibration_btn.clicked.connect(self.manual_calibration)
+        self.page1.confirm_calibration_btn.clicked.connect(self.confirm_calibration)
         self.page1.add_channel_btn.clicked.connect(self.add_channel)
         self.page1.gamma_slider.valueChanged.connect(self.update_gamma)
         self.page1.contrast_slider.valueChanged.connect(self.update_contrast)
@@ -386,7 +407,7 @@ class MainWindow(QMainWindow):
         self.shape_outline_color = QColor(255, 255, 255)
 
     def goto_first_page(self) -> None:
-        self.state.state = AppState.HOME
+        self.state.state = AppState.ADV_HOME
         self.stack.setCurrentWidget(self.page1)
 
     def goto_second_page(self) -> None:
@@ -621,27 +642,68 @@ class MainWindow(QMainWindow):
             self.image_viewer.update_display()
 
     def load_shapes(self) -> None:
+        if not self.image_viewer.channels:
+            QMessageBox.warning(self, "Warning", "Please load an image first")
+            return
+
         xml_path, _ = QFileDialog.getOpenFileName(
             self, "Open XML containing shapes", "", "XML Files (*.xml);;All Files (*)"
         )
         if not xml_path:
             return
+        self.xml_path = xml_path
+
+    def load_calibration(self) -> None:
+        self.state.calibration_points = []
+        self.state.image_viewer.remove_calibration_items()
+        if not self.image_viewer.channels:
+            QMessageBox.warning(self, "Warning", "Please load an image first")
+            return
+
         meta_path, _ = QFileDialog.getOpenFileName(
             self, "Open Image Metadata File", "", "TXT Files (*.txt);;All Files (*)"
         )
         if not meta_path:
             return
-        if not self.image_viewer.channels:
-            QMessageBox.warning(self, "Warning", "Please load an image first")
-            return
-        try:
-            meta = pd.read_csv(meta_path, sep="\t")
-            calibration = meta.iloc[0, 0]
-            self.im_xml = ImXML(meta_path, xml_path, '')
-            self.im_xml.im_shape = self.image_viewer.channels[0].image_data.shape
-            self.im_xml.calibration(calibration)
+        self.meta_path = meta_path
+
+    def manual_calibration(self) -> None:
+        self.meta_path = None
+        if self.state.state == AppState.ADV_HOME:
+            self.state.start_calibration_selection()
+            self.page1.manual_calibration_btn.setText("Cancel")
+            for button in self.page1.buttons:
+                button.setEnabled(False)
+            self.page1.manual_calibration_btn.setEnabled(True)
+        else:
+            assert self.state.state == AppState.SELECTING_CLB, f"State: {self.state.state}"
+            self.state.end_calibration_selection()
+            self.page1.manual_calibration_btn.setText("Manual")
+            self.enable_adv_home_buttons()
+
+    def confirm_calibration(self):
+        if self.meta_path is not None:
+            self.load_shapes_and_load_calibrate()
+        if len(self.state.calibration_points) == 3:
+            self.load_shapes_and_manual_calibrate()
+
+    def load_shapes_and_manual_calibrate(self) -> None:
+        xml_path = self.xml_path
+        
+        try: 
+            dvpxml = DVPXML(xml_path)
+            self.im_xml = dvpxml
+            
+            xx = np.array([ pt.x() for pt in self.state.calibration_points ])
+            yy = np.array([ pt.y() for pt in self.state.calibration_points ])
+            fxx = interpolate.interp1d(
+                dvpxml.y_calibration, xx, fill_value="extrapolate"
+            )
+            fyy = interpolate.interp1d(
+                dvpxml.x_calibration, yy, fill_value="extrapolate"
+            )
             self.state.reset_shapes()
-            total = self.im_xml.dvpxml.n_shapes
+            total = dvpxml.n_shapes
             progress_dialog = QProgressDialog(
                 "Loading shapes...", "Cancel", 0, total, self
             )
@@ -651,9 +713,71 @@ class MainWindow(QMainWindow):
             all_shapes = []
             for i in range(1, total + 1):
                 try:
-                    x, y = self.im_xml.dvpxml.return_shape(i)
-                    x_px = self.im_xml.fxx(y)
-                    y_px = self.im_xml.fyy(x)
+                    x, y = dvpxml.return_shape(i)
+                    x_px = fxx(y)
+                    y_px = fyy(x)
+                    if len(x) >= 3 and len(y) >= 3:
+                        all_shapes.append([x_px, y_px])
+                except ValueError:
+                    break
+                if i % 10 == 0 or i == total:
+                    percent = int(i / total * 100)
+                    progress_dialog.setValue(i)
+                    progress_dialog.setLabelText(f"Loading shapes... {percent}% loaded")
+                    QApplication.processEvents()
+                if progress_dialog.wasCanceled():
+                    all_shapes = []  # Discard all loaded shapes if cancelled
+                    break
+
+            # Downscaling shape size to match image resolution is not needed for manual
+
+            for shape_idx, shape in enumerate(all_shapes):
+                points = [QPointF(int(x), int(y)) for x, y in zip(*shape)]
+                if len(points) >= 3:
+                    polygon = Polygon(points, f"Shape_{shape_idx}")
+                    if hasattr(shape, "score"):
+                        polygon.set_score(shape.score)
+                    self.state.shapes.append(polygon)
+            self.image_viewer.update_polygon_display()
+            progress_dialog.setValue(total)
+
+            # Repaint shapes with the current color (default or user-selected)
+            main_window = self.parent()
+            while main_window and not hasattr(main_window, "image_viewer"):
+                main_window = main_window.parent()
+            if main_window and hasattr(main_window, "image_viewer"):
+                main_window.image_viewer.update_polygon_display()
+        
+        except Exception as e:
+            print(f"Error parsing XML: {e}")
+            QMessageBox.critical(
+                self, "XML Parsing Error", f"Failed to parse XML file:\n{str(e)}"
+            )
+
+    def load_shapes_and_load_calibrate(self) -> None:
+        meta_path = self.meta_path
+        xml_path = self.xml_path
+        try:
+            meta = pd.read_csv(meta_path, sep="\t")
+            calibration = meta.iloc[0, 0]
+            im_xml = ImXML(meta_path, xml_path, '')
+            self.im_xml = im_xml.dvpxml
+            im_xml.im_shape = self.image_viewer.channels[0].image_data.shape
+            im_xml.calibration(calibration)
+            self.state.reset_shapes()
+            total = im_xml.dvpxml.n_shapes
+            progress_dialog = QProgressDialog(
+                "Loading shapes...", "Cancel", 0, total, self
+            )
+            progress_dialog.setWindowModality(Qt.ApplicationModal)
+            progress_dialog.setValue(0)
+            progress_dialog.show()
+            all_shapes = []
+            for i in range(1, total + 1):
+                try:
+                    x, y = im_xml.dvpxml.return_shape(i)
+                    x_px = im_xml.fxx(y)
+                    y_px = im_xml.fyy(x)
                     if len(x) >= 3 and len(y) >= 3:
                         all_shapes.append([x_px, y_px])
                 except ValueError:
@@ -705,6 +829,9 @@ class MainWindow(QMainWindow):
         assert self.state.state == AppState.ADV_HOME
         for button in self.page1.buttons:
             button.setEnabled(True)
+        # self.page1.load_shapes_btn.setEnabled(False)
+        # if (len(self.state.calibration_points) == 3) or (self.meta_path is not None):
+        #     self.page1.load_shapes_btn.setEnabled(True)
 
     def reset_main_buttons(self) -> None:
         assert self.state.state == AppState.MAIN
@@ -867,7 +994,7 @@ class MainWindow(QMainWindow):
             return
         # Export XML
         xml_path = base_path + ".xml"
-        self.im_xml.export_xml(xml_path, selected_indices)
+        export_xml(xml_path, selected_indices, self.im_xml)
         # Export CSV
         csv_path = base_path + ".csv"
         # Get scores from state.shapes
@@ -878,17 +1005,19 @@ class MainWindow(QMainWindow):
             data.append({"CellID": idx + 1, "Score": score})
         df = pd.DataFrame(data)
         df.to_csv(csv_path, index=False)
-        QMessageBox.information(
-            self, "Export Complete", f"Exported to:\n{xml_path}\n{csv_path}"
-        )
+        
         # Export Landmarks XML
         landmarks_path = base_path + "_landmarks.xml"
-        self.im_xml.export_landmarks_xml(
+        export_landmarks_xml(
             landmarks_path, self.state.landmarks, self.scale
         )
         # Export AR XML
         ar_path = base_path + "_AR.xml"
-        self.im_xml.export_ar_xml(ar_path, self.state.active_regions, self.scale)
+        export_ar_xml(ar_path, self.state.active_regions, self.scale)
+
+        QMessageBox.information(
+            self, "Export Complete", f"Exported to:\n{xml_path}\n{csv_path}"
+        )
 
     # Update after loading landmarks from file
     def load_landmarks_from_file(self):
