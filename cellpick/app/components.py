@@ -129,6 +129,17 @@ class AppState(Enum):
     SELECTING_CLB = auto()
 
 
+class DataLoadMode(Enum):
+    """
+    Enum representing the data loading mode.
+    Once set, this determines which workflow is available.
+    """
+
+    NONE = auto()  # No data loaded yet
+    IMAGE = auto()  # Traditional image + XML workflow
+    SPATIALDATA = auto()  # SpatialData workflow
+
+
 class AppStateManager:
     """
     Class to manage the application state, shapes, landmarks, and active regions.
@@ -158,6 +169,7 @@ class AppStateManager:
     """
 
     state: AppState
+    data_load_mode: DataLoadMode
     image_viewer: Any
     main_window: Any
     shapes: List[Polygon]
@@ -173,6 +185,7 @@ class AppStateManager:
         Initialize the AppStateManager.
         """
         self.state = AppState.HOME
+        self.data_load_mode = DataLoadMode.NONE
         self.image_viewer = None
         self.main_window = None
         self.shapes: List[Polygon] = []
@@ -450,6 +463,13 @@ class AppStateManager:
         self.selected_shape_ids = self.active_shape_ids
         self.image_viewer.update_polygon_display()
 
+    def update_active_shapes(self) -> None:
+        """
+        Update active shapes based on current active regions.
+        Alias for filter_by_ar() for clearer semantics.
+        """
+        self.filter_by_ar()
+
     def select_shapes(self, k: int) -> None:
         """
         Select k shapes from the active shapes using the Gonzalez k-center algorithm.
@@ -462,12 +482,14 @@ class AppStateManager:
         if len(self.active_shape_ids) <= k:
             self.selected_shape_ids = self.active_shape_ids
         elif self.main_window.page2.clustering_type.currentIndex() == 0:
+            # Select k over union of regions
             polys = []
             for i, idx1 in enumerate(self.active_shape_ids):
                 polys.append([(p.x(), p.y()) for p in self.shapes[idx1].points])
             selected_ids = polygon_gonzalez(polys, k)
             self.selected_shape_ids = [self.active_shape_ids[i] for i in selected_ids]
-        else:
+        elif self.main_window.page2.clustering_type.currentIndex() == 1:
+            # Select k per active region
             point_ids = [[] for _ in self.active_regions]
             polys = [[] for _ in self.active_regions]
             for i in self.active_shape_ids:
@@ -492,6 +514,96 @@ class AppStateManager:
             self.selected_shape_ids = []
             for i, selected_ids in enumerate(selected_idss):
                 self.selected_shape_ids += [point_ids[i][idx] for idx in selected_ids]
+        else:
+            # Select k per label (from spatial data table)
+            # Index >= 2 means it's a label-based selection
+            current_text = self.main_window.page2.clustering_type.currentText()
+
+            # Extract label column name from text "Select k per label: {column_name}"
+            if not current_text.startswith("Select k per label: "):
+                QMessageBox.warning(
+                    self.main_window, "Error", "Invalid clustering type selected"
+                )
+                return
+
+            label_column = current_text.replace("Select k per label: ", "")
+
+            # Get cell labels from spatial data
+            if (
+                not hasattr(self.main_window, "_spatialdata_loader")
+                or self.main_window._spatialdata_loader is None
+            ):
+                QMessageBox.warning(self.main_window, "Error", "No spatial data loaded")
+                return
+
+            try:
+                from .spatialdata_io import SpatialDataLoader
+
+                cell_labels_dict = self.main_window._spatialdata_loader.get_cell_labels(
+                    label_column
+                )
+
+                if cell_labels_dict is None:
+                    QMessageBox.warning(
+                        self.main_window,
+                        "Error",
+                        f"Could not load labels from column: {label_column}",
+                    )
+                    return
+
+                # Group cells by their label values
+                label_groups = {}
+                for shape_idx in self.active_shape_ids:
+                    if shape_idx in cell_labels_dict:
+                        label_value = cell_labels_dict[shape_idx]
+                        if label_value not in label_groups:
+                            label_groups[label_value] = []
+                        label_groups[label_value].append(shape_idx)
+
+                if not label_groups:
+                    QMessageBox.warning(
+                        self.main_window,
+                        "Error",
+                        f"No cells found with labels from column: {label_column}",
+                    )
+                    return
+
+                # Prepare data for fair k-center algorithm
+                point_ids = []
+                polys = []
+                for label_value in sorted(label_groups.keys()):
+                    point_ids.append(label_groups[label_value])
+                    label_polys = []
+                    for shape_idx in label_groups[label_value]:
+                        label_polys.append(
+                            [(p.x(), p.y()) for p in self.shapes[shape_idx].points]
+                        )
+                    polys.append(label_polys)
+
+                # Run fair k-center algorithm
+                selected_idss = polygon_round_robin_gonzalez(polys, k)
+                if selected_idss is None:
+                    QMessageBox.warning(
+                        self.main_window,
+                        "Error",
+                        f"Could not select {k} shapes per label group",
+                    )
+                    return
+
+                # Collect selected shape IDs
+                self.selected_shape_ids = []
+                for i, selected_ids in enumerate(selected_idss):
+                    self.selected_shape_ids += [
+                        point_ids[i][idx] for idx in selected_ids
+                    ]
+
+            except Exception as e:
+                QMessageBox.warning(
+                    self.main_window,
+                    "Error",
+                    f"Error during label-based selection: {str(e)}",
+                )
+                return
 
         self.image_viewer.update_polygon_display()
 
@@ -550,25 +662,24 @@ class AppStateManager:
             shape.score = None
             shape.set_color()
         self.image_viewer.update_polygon_display()
-    
+
     def start_calibration_selection(self) -> None:
         self.calibration_points = []
         self.image_viewer.remove_calibration_items()
         self.state = AppState.SELECTING_CLB
-        
 
     def end_calibration_selection(self) -> None:
         self.state = AppState.ADV_HOME
         self.image_viewer.remove_calibration_items()
-    
+
     def add_calibration_point(self, scene_pos: QPointF) -> None:
         self.calibration_points.append(scene_pos)
-        self.image_viewer.add_calibration_item(scene_pos, len(self.calibration_points)-1)
+        self.image_viewer.add_calibration_item(
+            scene_pos, len(self.calibration_points) - 1
+        )
         if len(self.calibration_points) == 3:
             self.state = AppState.ADV_HOME
             self.main_window.page1.manual_calibration_btn.setText("Manual")
             self.main_window.enable_adv_home_buttons()
             # if self.main_window.xml_path is not None:
             #     QTimer.singleShot(10, self.main_window.load_shapes_and_manual_calibrate)
-                
-    

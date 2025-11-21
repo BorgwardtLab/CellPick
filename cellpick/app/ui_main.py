@@ -65,7 +65,7 @@ from PySide6.QtWidgets import (
 )
 from tifffile import imread as tifimread
 
-from .components import CHANNEL_COLORS, AppState, AppStateManager, Polygon
+from .components import CHANNEL_COLORS, AppState, AppStateManager, DataLoadMode, Polygon
 from .image_viewer import ImageViewer
 from .ui_components import (
     AnimatedButton,
@@ -73,7 +73,19 @@ from .ui_components import (
     ClickableLabel,
     ProgressDialog,
 )
-from .utils import ImXML, DVPXML, export_xml, export_landmarks_xml, export_ar_xml
+from .utils import (
+    ImXML,
+    DVPXML,
+    MockDVPXML,
+    export_xml,
+    export_landmarks_xml,
+    export_ar_xml,
+)
+from .spatialdata_io import (
+    SpatialDataLoader,
+    SpatialDataExporter,
+    SPATIALDATA_AVAILABLE,
+)
 
 if sys.platform == "darwin":
     try:
@@ -119,6 +131,7 @@ class ScrollableContainer(QWidget):
 class SelectionPage(QWidget):
     channel_control_panel: ScrollableContainer
     add_channel_btn: AnimatedButton
+    add_spatialdata_btn: AnimatedButton
     load_shapes_btn: AnimatedButton
     gamma_slider: QSlider
     refresh_btn: AnimatedButton
@@ -130,20 +143,19 @@ class SelectionPage(QWidget):
         super().__init__()
         layout = QVBoxLayout(self)
         self.channel_control_panel = ScrollableContainer(height=120)
-        button_panel1 = QGroupBox("Load Image")
+        button_panel1 = QGroupBox("Load Data")
         button_layout1 = QVBoxLayout(button_panel1)
         button_panel2 = QGroupBox("Image Adjustments")
         button_layout2 = QVBoxLayout(button_panel2)
-        button_panel3 = QGroupBox("Cell Shapes")
+        button_panel3 = QGroupBox("Calibration")
         button_layout3 = QVBoxLayout(button_panel3)
-        button_panel4 = QGroupBox("Calibration")
-        button_layout4 = QVBoxLayout(button_panel4)
+        self.add_spatialdata_btn = AnimatedButton("Add spatial data")
         self.add_channel_btn = AnimatedButton("Add channel")
         self.load_shapes_btn = AnimatedButton("Load shapes")
         self.load_calibration_btn = AnimatedButton("Load File", size=(32, 96))
         self.manual_calibration_btn = AnimatedButton("Manual", size=(32, 96))
         self.confirm_calibration_btn = AnimatedButton("Calibrate")
-        self.select_shape_color_btn = AnimatedButton("Select color")
+        self.select_shape_color_btn = AnimatedButton("Select shape color")
         self.gamma_slider = QSlider(Qt.Horizontal)
         self.gamma_slider.setRange(-100, 100)
         self.gamma_slider.setValue(0)
@@ -155,29 +167,29 @@ class SelectionPage(QWidget):
         self.next_btn = AnimatedButton(
             "Next", color1="87, 143, 202", color2="54, 116, 181"
         )
+        button_layout1.addWidget(self.add_spatialdata_btn)
         button_layout1.addWidget(self.add_channel_btn)
         button_layout1.addWidget(self.channel_control_panel)
+        button_layout1.addWidget(self.load_shapes_btn)
         button_layout2.addWidget(QLabel("Brightness"))
         button_layout2.addWidget(self.gamma_slider)
         button_layout2.addWidget(QLabel("Contrast"))
         button_layout2.addWidget(self.contrast_slider)
         button_layout2.addWidget(self.refresh_btn)
-        button_layout3.addWidget(self.load_shapes_btn)
-        button_layout3.addWidget(self.select_shape_color_btn)
-        
+        button_layout2.addWidget(self.select_shape_color_btn)
+
         subwidget1 = QWidget()
         sublayout1 = QHBoxLayout(subwidget1)
         sublayout1.setContentsMargins(0, 0, 0, 0)
         sublayout1.setSpacing(8)
         sublayout1.addWidget(self.load_calibration_btn)
         sublayout1.addWidget(self.manual_calibration_btn)
-        button_layout4.addWidget(subwidget1)
-        button_layout4.addWidget(self.confirm_calibration_btn)
+        button_layout3.addWidget(subwidget1)
+        button_layout3.addWidget(self.confirm_calibration_btn)
 
         layout.addWidget(button_panel1)
         layout.addWidget(button_panel2)
         layout.addWidget(button_panel3)
-        layout.addWidget(button_panel4)
         layout.addWidget(self.reset_btn)
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.next_btn)
@@ -218,6 +230,7 @@ class ActionPage(QWidget):
     add_shapes_btn: AnimatedButton
     rem_shapes_btn: AnimatedButton
     export_btn: AnimatedButton
+    export_spatialdata_btn: AnimatedButton
     load_lnd_btn: AnimatedButton
     load_ar_btn: AnimatedButton
     buttons: List[Any]
@@ -251,10 +264,16 @@ class ActionPage(QWidget):
         self.clustering_type.addItems(
             ["Select k over union of regions", "Select k per region"]
         )
+        # Label-based options will be added dynamically when spatial data is loaded
         self.add_shapes_btn = AnimatedButton("Add", size=(32, 96))
         self.rem_shapes_btn = AnimatedButton("Delete", size=(32, 96))
         self.export_btn = AnimatedButton(
-            "Export Selected Cells",
+            "Export as XML",
+            color1="34, 197, 94",
+            color2="21, 128, 61",
+        )
+        self.export_spatialdata_btn = AnimatedButton(
+            "Export to Spatial Data",
             color1="34, 197, 94",
             color2="21, 128, 61",
         )
@@ -293,11 +312,15 @@ class ActionPage(QWidget):
         sublayout3.addWidget(self.rem_shapes_btn)
         button_layout3.addWidget(subwidget3)
 
+        button_panel4 = QGroupBox("Export Results")
+        button_layout4 = QVBoxLayout(button_panel4)
+        button_layout4.addWidget(self.export_btn)
+        button_layout4.addWidget(self.export_spatialdata_btn)
+
         layout.addWidget(button_panel2)
         layout.addWidget(button_panel1)
         layout.addWidget(button_panel3)
-
-        layout.addWidget(self.export_btn)
+        layout.addWidget(button_panel4)
 
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.back_btn)
@@ -328,6 +351,10 @@ class MainWindow(QMainWindow):
         self.state = AppStateManager()
         self.state.main_window = self
         self.setWindowTitle("CellPick")
+        # SpatialData-related attributes
+        self._spatialdata_loader = None
+        self._spatialdata_categorical_columns = []
+        self._loaded_spatialdata_path = None
         # Set window icon
         current_dir = Path(__file__).parent.parent
         logo_svg_path = current_dir / "assets" / "logo.svg"
@@ -382,6 +409,7 @@ class MainWindow(QMainWindow):
         self.page1.manual_calibration_btn.clicked.connect(self.manual_calibration)
         self.page1.confirm_calibration_btn.clicked.connect(self.confirm_calibration)
         self.page1.add_channel_btn.clicked.connect(self.add_channel)
+        self.page1.add_spatialdata_btn.clicked.connect(self.add_spatialdata)
         self.page1.gamma_slider.valueChanged.connect(self.update_gamma)
         self.page1.contrast_slider.valueChanged.connect(self.update_contrast)
         self.page1.refresh_btn.clicked.connect(self.image_viewer.update_display)
@@ -398,6 +426,7 @@ class MainWindow(QMainWindow):
         self.page2.add_shapes_btn.clicked.connect(self.toggle_shape_add)
         self.page2.rem_shapes_btn.clicked.connect(self.toggle_shape_rem)
         self.page2.export_btn.clicked.connect(self.export_selected_shapes)
+        self.page2.export_spatialdata_btn.clicked.connect(self.export_to_spatialdata)
         self.page2.load_lnd_btn.clicked.connect(self.load_landmarks_from_file)
         self.page2.load_ar_btn.clicked.connect(self.load_ar_from_file)
         self.reset_home_buttons()
@@ -426,7 +455,43 @@ class MainWindow(QMainWindow):
         self.image_viewer.graphics_view.scale(factor, factor)
         self.image_viewer.graphics_view.zoom_factor = 1.0
 
+    def set_image_workflow_mode(self) -> None:
+        """
+        Set the app to IMAGE workflow mode and disable SpatialData buttons.
+        This is irreversible without restarting the app.
+        """
+        self.state.data_load_mode = DataLoadMode.IMAGE
+        # Disable SpatialData button
+        self.page1.add_spatialdata_btn.setEnabled(False)
+        # Disable calibration buttons until shapes are loaded
+        self.page1.load_calibration_btn.setEnabled(False)
+        self.page1.manual_calibration_btn.setEnabled(False)
+        self.page1.confirm_calibration_btn.setEnabled(False)
+
+    def set_spatialdata_workflow_mode(self) -> None:
+        """
+        Set the app to SPATIALDATA workflow mode and disable IMAGE workflow buttons.
+        This is irreversible without restarting the app.
+        """
+        self.state.data_load_mode = DataLoadMode.SPATIALDATA
+        # Disable all IMAGE workflow buttons
+        self.page1.add_channel_btn.setEnabled(False)
+        self.page1.select_shape_color_btn.setEnabled(False)
+        self.page1.load_calibration_btn.setEnabled(False)
+        self.page1.manual_calibration_btn.setEnabled(False)
+        self.page1.confirm_calibration_btn.setEnabled(False)
+
     def add_channel(self) -> None:
+        # Check if we're already in SPATIALDATA mode
+        if self.state.data_load_mode == DataLoadMode.SPATIALDATA:
+            QMessageBox.warning(
+                self,
+                "Wrong Workflow",
+                "Cannot add image channels in SpatialData workflow mode.\n"
+                "Please restart the application to switch workflows.",
+            )
+            return
+
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Open Channel Image",
@@ -444,10 +509,10 @@ class MainWindow(QMainWindow):
                 return
             if len(image_data.shape) == 2:
                 image_data = image_data[..., None]
-            
+
             ch_idx = np.argmin(image_data.shape)
-            image_data = np.moveaxis(image_data, ch_idx, -1) # now it's (H, W, C)
-            
+            image_data = np.moveaxis(image_data, ch_idx, -1)  # now it's (H, W, C)
+
             # Downsample image to full HD resolution (minimum side 1080px, keep aspect ratio)
             max_side = max(image_data.shape[0], image_data.shape[1])
             if max_side > self.image_resolution:
@@ -512,6 +577,293 @@ class MainWindow(QMainWindow):
                 )
                 self.state.enable_advanced_home()
                 self.img_stack.setCurrentWidget(self.image_viewer)
+
+                # Set IMAGE workflow mode on first channel load
+                if self.state.data_load_mode == DataLoadMode.NONE:
+                    self.set_image_workflow_mode()
+
+    def add_spatialdata(self) -> None:
+        """Load data from a SpatialData .zarr store."""
+        # Check if we're already in IMAGE mode
+        if self.state.data_load_mode == DataLoadMode.IMAGE:
+            QMessageBox.warning(
+                self,
+                "Wrong Workflow",
+                "Cannot load SpatialData in image workflow mode.\n"
+                "Please restart the application to switch workflows.",
+            )
+            return
+
+        if not SPATIALDATA_AVAILABLE:
+            QMessageBox.critical(
+                self,
+                "SpatialData Not Available",
+                "SpatialData is not installed. Please install it with:\n"
+                "pip install spatialdata spatialdata-io spatialdata-plot",
+            )
+            return
+
+        # Open folder dialog for .sdata or .zarr
+        zarr_path = QFileDialog.getExistingDirectory(
+            self,
+            "Select SpatialData Folder (.sdata or .zarr)",
+            "",
+            QFileDialog.ShowDirsOnly,
+        )
+
+        if not zarr_path:
+            return
+
+        try:
+            # Load SpatialData
+            progress = QProgressDialog("Loading SpatialData...", "Cancel", 0, 100, self)
+            progress.setWindowModality(Qt.ApplicationModal)
+            progress.setValue(10)
+            QApplication.processEvents()
+
+            loader = SpatialDataLoader(zarr_path)
+            progress.setValue(20)
+            QApplication.processEvents()
+
+            # Check what's available
+            available_images = loader.get_available_images()
+            available_labels = loader.get_available_labels()
+            available_shapes = loader.get_available_shapes()
+
+            if not available_images and not available_labels and not available_shapes:
+                QMessageBox.warning(
+                    self,
+                    "No Data Found",
+                    "The selected SpatialData store contains no images, labels, or shapes.",
+                )
+                progress.close()
+                return
+
+            # Load images
+            if available_images:
+                progress.setLabelText("Extracting image channels...")
+                progress.setValue(30)
+                QApplication.processEvents()
+
+                channels, channel_names = loader.extract_image_channels()
+
+                # Downsample if needed
+                inv_scale = 1  # Track downsampling factor for coordinates
+                if channels:
+                    height, width = channels[0].shape
+                    max_side = max(height, width)
+
+                    if max_side > self.image_resolution:
+                        inv_scale = math.ceil(max_side / self.image_resolution)
+                        self.scale /= inv_scale
+
+                        downsampled_channels = []
+                        for ch in channels:
+                            downsampled = ch[::inv_scale, ::inv_scale].copy()
+                            downsampled_channels.append(downsampled)
+                        channels = downsampled_channels
+
+                    progress.setValue(50)
+                    QApplication.processEvents()
+
+                    # Add channels to viewer
+                    for i, (channel_data, channel_name) in enumerate(
+                        zip(channels, channel_names)
+                    ):
+                        # Use default white color for all channels
+                        custom_color = np.array([255, 255, 255])
+
+                        error_id = self.image_viewer.add_channel(
+                            channel_data, channel_name, custom_color
+                        )
+                        if error_id != 0:
+                            QMessageBox.warning(
+                                self, "Error", f"Failed to add channel {channel_name}"
+                            )
+                            continue
+
+                        self.channels.append(zarr_path)
+                        self.add_channel_control(
+                            channel_name, len(self.image_viewer.channels) - 1
+                        )
+
+                    self.img_stack.setCurrentWidget(self.image_viewer)
+
+            progress.setValue(60)
+            QApplication.processEvents()
+
+            # Load shapes from labels or shapes
+            polygons_loaded = False
+
+            if available_labels:
+                progress.setLabelText("Extracting polygons from segmentation masks...")
+                progress.setValue(70)
+                QApplication.processEvents()
+
+                # Define progress callback to update the dialog
+                def update_polygon_progress(current, total):
+                    if progress.wasCanceled():
+                        raise RuntimeError("Operation cancelled by user")
+                    percent = 70 + int(15 * current / total)
+                    progress.setValue(percent)
+                    progress.setLabelText(
+                        f"Extracting polygons: {current}/{total} cells..."
+                    )
+                    QApplication.processEvents()
+
+                polygons = loader.extract_polygons_from_labels(
+                    max_cells=100000, progress_callback=update_polygon_progress
+                )
+
+                if polygons:
+                    self.state.reset_shapes()
+                    for points, label in polygons:
+                        polygon = Polygon(points, label)
+                        self.state.shapes.append(polygon)
+                    polygons_loaded = True
+
+                progress.setValue(85)
+                QApplication.processEvents()
+
+            elif available_shapes:
+                progress.setLabelText("Extracting polygons from shapes...")
+                progress.setValue(70)
+                QApplication.processEvents()
+
+                polygons = loader.extract_polygons_from_shapes()
+
+                if polygons:
+                    self.state.reset_shapes()
+                    for points, label in polygons:
+                        polygon = Polygon(points, label)
+                        self.state.shapes.append(polygon)
+                    polygons_loaded = True
+
+                progress.setValue(85)
+                QApplication.processEvents()
+
+            # Update display
+            if polygons_loaded:
+                self.image_viewer.update_polygon_display()
+
+            # Check for and load CellPick annotations
+            annotations_loaded = []
+            if loader.has_cellpick_annotations():
+                progress.setLabelText("Loading CellPick annotations...")
+                progress.setValue(90)
+                QApplication.processEvents()
+
+                # Load landmarks first (they don't affect other selections)
+                landmarks = loader.load_cellpick_landmarks()
+                if landmarks:
+                    self.state.landmarks = landmarks
+                    # Add landmarks to visual display
+                    for landmark_points in landmarks:
+                        self.image_viewer.add_persistent_lnd(landmark_points)
+                    annotations_loaded.append(f"{len(landmarks)} landmark(s)")
+
+                    # If 2 landmarks loaded, set scores just like manual selection
+                    if len(landmarks) == 2:
+                        self.state.set_scores()
+
+                # Load active regions (they determine which cells are active)
+                active_regions = loader.load_cellpick_active_regions()
+                if active_regions:
+                    self.state.active_regions = active_regions
+                    # Add active regions to visual display
+                    for ar_points in active_regions:
+                        self.image_viewer.add_persistent_ar(ar_points)
+                    annotations_loaded.append(f"{len(active_regions)} active region(s)")
+
+                    # Update active shapes based on loaded ARs (but don't set selected yet)
+                    self.state.active_shape_ids = []
+                    for i in range(len(self.state.shapes)):
+                        c = self.state.shapes[i].centroid()
+                        is_contained = False
+                        for ar in self.state.active_regions:
+                            poly = QPolygonF(ar)
+                            if poly.containsPoint(c, Qt.OddEvenFill):
+                                is_contained = True
+                                break
+                        if is_contained:
+                            self.state.active_shape_ids.append(i)
+
+                # Load selected cells AFTER ARs are processed
+                if polygons_loaded:
+                    # Create list of (points, label) tuples for matching
+                    all_polygons = [
+                        (poly.points, poly.label) for poly in self.state.shapes
+                    ]
+                    selected_ids = loader.load_cellpick_selected_cells(all_polygons)
+                    if selected_ids:
+                        self.state.selected_shape_ids = selected_ids
+                        annotations_loaded.append(
+                            f"{len(selected_ids)} selected cell(s)"
+                        )
+                    elif active_regions:
+                        # If no selected cells but we have ARs, default to all active shapes
+                        self.state.selected_shape_ids = self.state.active_shape_ids
+
+                # Update display
+                self.image_viewer.update_polygon_display()
+
+            # Create a MockDVPXML for XML export compatibility
+            if polygons_loaded:
+                self.im_xml = MockDVPXML(self.state.shapes)
+
+            # Store the loader for table access
+            self._spatialdata_loader = loader
+
+            # Store the path for later export
+            self._loaded_spatialdata_path = zarr_path
+
+            # Get categorical columns for label-based selection
+            categorical_columns = loader.get_categorical_columns()
+            if categorical_columns:
+                # Store categorical columns for later use
+                self._spatialdata_categorical_columns = categorical_columns
+                # Update clustering dropdown to include label options
+                self.update_clustering_dropdown_with_labels(categorical_columns)
+            else:
+                self._spatialdata_categorical_columns = []
+
+            progress.setValue(100)
+            progress.close()
+
+            self.state.enable_advanced_home()
+
+            # Set SPATIALDATA workflow mode
+            if self.state.data_load_mode == DataLoadMode.NONE:
+                self.set_spatialdata_workflow_mode()
+
+            # Build success message
+            msg = f"Successfully loaded:\n"
+            msg += f"- {len(self.image_viewer.channels)} image channel(s)\n"
+            msg += f"- {len(self.state.shapes)} cell polygon(s)"
+            if annotations_loaded:
+                msg += f"\n\nCellPick annotations:\n- " + "\n- ".join(
+                    annotations_loaded
+                )
+
+            QMessageBox.information(self, "SpatialData Loaded", msg)
+
+        except RuntimeError as e:
+            # User cancelled
+            if "progress" in locals():
+                progress.close()
+            if "cancelled" in str(e).lower():
+                return  # Silent cancellation
+            QMessageBox.warning(
+                self, "Operation Cancelled", "SpatialData loading was cancelled."
+            )
+        except Exception as e:
+            if "progress" in locals():
+                progress.close()
+            QMessageBox.critical(
+                self,
+                "Error Loading SpatialData",
+                f"Failed to load SpatialData:\n{str(e)}",
+            )
 
     def add_channel_control(self, name: str, channel_idx: int) -> None:
         channel_widget = QWidget()
@@ -653,6 +1005,22 @@ class MainWindow(QMainWindow):
             return
         self.xml_path = xml_path
 
+        # Enable calibration buttons now that shapes are loaded
+        self.page1.load_calibration_btn.setEnabled(True)
+        self.page1.manual_calibration_btn.setEnabled(True)
+        self.page1.confirm_calibration_btn.setEnabled(True)
+
+        # Show informative message
+        QMessageBox.information(
+            self,
+            "Shapes Loaded",
+            "Shape file has been successfully loaded!\n\n"
+            "To display the shapes on the image, please calibrate using one of the following methods:\n\n"
+            "• Load Calibration File: Use an existing calibration metadata file\n"
+            "• Manual Calibration: Define three calibration points manually\n\n"
+            "After selecting your calibration method, click 'Calibrate' to proceed.",
+        )
+
     def load_calibration(self) -> None:
         self.state.calibration_points = []
         self.state.image_viewer.remove_calibration_items()
@@ -676,7 +1044,9 @@ class MainWindow(QMainWindow):
                 button.setEnabled(False)
             self.page1.manual_calibration_btn.setEnabled(True)
         else:
-            assert self.state.state == AppState.SELECTING_CLB, f"State: {self.state.state}"
+            assert (
+                self.state.state == AppState.SELECTING_CLB
+            ), f"State: {self.state.state}"
             self.state.end_calibration_selection()
             self.page1.manual_calibration_btn.setText("Manual")
             self.enable_adv_home_buttons()
@@ -689,13 +1059,13 @@ class MainWindow(QMainWindow):
 
     def load_shapes_and_manual_calibrate(self) -> None:
         xml_path = self.xml_path
-        
-        try: 
+
+        try:
             dvpxml = DVPXML(xml_path)
             self.im_xml = dvpxml
-            
-            xx = np.array([ pt.x() for pt in self.state.calibration_points ])
-            yy = np.array([ pt.y() for pt in self.state.calibration_points ])
+
+            xx = np.array([pt.x() for pt in self.state.calibration_points])
+            yy = np.array([pt.y() for pt in self.state.calibration_points])
             fxx = interpolate.interp1d(
                 dvpxml.y_calibration, xx, fill_value="extrapolate"
             )
@@ -747,7 +1117,7 @@ class MainWindow(QMainWindow):
                 main_window = main_window.parent()
             if main_window and hasattr(main_window, "image_viewer"):
                 main_window.image_viewer.update_polygon_display()
-        
+
         except Exception as e:
             print(f"Error parsing XML: {e}")
             QMessageBox.critical(
@@ -760,7 +1130,7 @@ class MainWindow(QMainWindow):
         try:
             meta = pd.read_csv(meta_path, sep="\t")
             calibration = meta.iloc[0, 0]
-            im_xml = ImXML(meta_path, xml_path, '')
+            im_xml = ImXML(meta_path, xml_path, "")
             self.im_xml = im_xml.dvpxml
             im_xml.im_shape = self.image_viewer.channels[0].image_data.shape
             im_xml.calibration(calibration)
@@ -824,6 +1194,7 @@ class MainWindow(QMainWindow):
         for button in self.page1.buttons:
             button.setEnabled(False)
         self.page1.add_channel_btn.setEnabled(True)
+        self.page1.add_spatialdata_btn.setEnabled(True)
 
     def enable_adv_home_buttons(self) -> None:
         assert self.state.state == AppState.ADV_HOME
@@ -846,6 +1217,8 @@ class MainWindow(QMainWindow):
             self.page2.add_lnd_btn.setEnabled(True)
         if self.state.selected_shape_ids:
             self.page2.export_btn.setEnabled(True)
+            if SPATIALDATA_AVAILABLE:
+                self.page2.export_spatialdata_btn.setEnabled(True)
         if self.state.can_load_ar():
             self.page2.load_ar_btn.setEnabled(True)
         if self.state.can_load_lnd():
@@ -940,6 +1313,28 @@ class MainWindow(QMainWindow):
             self.page2.delete_ar_btn.setText("Delete AR")
             self.reset_main_buttons()
 
+    def update_clustering_dropdown_with_labels(
+        self, categorical_columns: List[str]
+    ) -> None:
+        """
+        Update the clustering type dropdown to include label-based grouping options.
+
+        Parameters
+        ----------
+        categorical_columns : List[str]
+            List of categorical column names from the spatial data table.
+        """
+        # Store original items
+        original_items = ["Select k over union of regions", "Select k per region"]
+
+        # Clear and re-add items
+        self.page2.clustering_type.clear()
+        self.page2.clustering_type.addItems(original_items)
+
+        # Add label-based options for each categorical column
+        for col in categorical_columns:
+            self.page2.clustering_type.addItem(f"Select k per label: {col}")
+
     def select_shapes(self) -> None:
         self.state.select_shapes(self.page2.k_box.value())
 
@@ -968,6 +1363,133 @@ class MainWindow(QMainWindow):
             self.state.state = AppState.MAIN
             self.page2.rem_shapes_btn.setText("Delete")
             self.reset_main_buttons()
+
+    def export_to_spatialdata(self) -> None:
+        """
+        Export CellPick annotations to SpatialData format.
+        """
+        if not SPATIALDATA_AVAILABLE:
+            QMessageBox.critical(
+                self,
+                "SpatialData Not Available",
+                "SpatialData is not installed. Please install it with:\n"
+                "pip install spatialdata spatialdata-io spatialdata-plot",
+            )
+            return
+
+        # Check if we have anything to export
+        has_selection = len(self.state.selected_shape_ids) > 0
+        has_landmarks = len(self.state.landmarks) > 0
+        has_ar = len(self.state.active_regions) > 0
+
+        if not (has_selection or has_landmarks or has_ar):
+            QMessageBox.warning(
+                self,
+                "Nothing to Export",
+                "No selections, landmarks, or active regions to export.",
+            )
+            return
+
+        # Prompt for output folder
+        output_path = QFileDialog.getSaveFileName(
+            self, "Save SpatialData", "", "SpatialData Store (*.sdata)"
+        )[0]
+
+        if not output_path:
+            return
+
+        # Ensure .sdata extension
+        if not output_path.endswith(".sdata") and not output_path.endswith(".zarr"):
+            output_path += ".sdata"
+
+        try:
+            progress = QProgressDialog(
+                "Exporting to SpatialData...", "Cancel", 0, 100, self
+            )
+            progress.setWindowModality(Qt.ApplicationModal)
+            progress.setValue(10)
+            QApplication.processEvents()
+
+            # Get selected polygons
+            selected_polygons = (
+                [self.state.shapes[idx] for idx in self.state.selected_shape_ids]
+                if has_selection
+                else []
+            )
+
+            # Get image shape and channels
+            image_shape = None
+            image_channels = None
+            all_polygons = None
+
+            if self.image_viewer.channels:
+                image_shape = self.image_viewer.channels[0].image_data.shape
+
+                # If in IMAGE mode, prepare channels and all polygons for export
+                if self.state.data_load_mode == DataLoadMode.IMAGE:
+                    image_channels = [
+                        (ch.image_data, ch.name) for ch in self.image_viewer.channels
+                    ]
+                    # Include ALL shapes for segmentation mask
+                    all_polygons = self.state.shapes
+
+            # Get input path if we loaded from SpatialData
+            input_path = getattr(self, "_loaded_spatialdata_path", None)
+
+            # Don't use input_path in IMAGE mode (create from scratch)
+            if self.state.data_load_mode == DataLoadMode.IMAGE:
+                input_path = None
+
+            progress.setValue(30)
+            QApplication.processEvents()
+
+            # Define progress callback
+            def update_export_progress(message, percent):
+                if progress.wasCanceled():
+                    raise RuntimeError("Export cancelled by user")
+                progress.setLabelText(message)
+                progress.setValue(percent)
+                QApplication.processEvents()
+
+            # Export to SpatialData
+            SpatialDataExporter.export_to_spatialdata(
+                input_path=input_path,
+                output_path=output_path,
+                selected_polygons=selected_polygons,
+                landmarks=self.state.landmarks if has_landmarks else None,
+                active_regions=self.state.active_regions if has_ar else None,
+                image_shape=image_shape,
+                coordinate_system="global",
+                progress_callback=update_export_progress,
+                image_channels=image_channels,
+                all_polygons=all_polygons,
+            )
+
+            progress.setValue(100)
+            progress.close()
+
+            # Build export message
+            msg_parts = []
+            if has_selection:
+                msg_parts.append(f"{len(selected_polygons)} selected cell(s)")
+            if has_landmarks:
+                msg_parts.append(f"{len(self.state.landmarks)} landmark(s)")
+            if has_ar:
+                msg_parts.append(f"{len(self.state.active_regions)} active region(s)")
+
+            QMessageBox.information(
+                self,
+                "Export Complete",
+                f"Successfully exported to:\n{output_path}\n\n"
+                f"Exported:\n- " + "\n- ".join(msg_parts),
+            )
+
+        except Exception as e:
+            if "progress" in locals():
+                progress.close()
+            QMessageBox.critical(
+                self, "Export Error", f"Failed to export to SpatialData:\n{str(e)}"
+            )
 
     def export_selected_shapes(self) -> None:
         """
@@ -1005,12 +1527,10 @@ class MainWindow(QMainWindow):
             data.append({"CellID": idx + 1, "Score": score})
         df = pd.DataFrame(data)
         df.to_csv(csv_path, index=False)
-        
+
         # Export Landmarks XML
         landmarks_path = base_path + "_landmarks.xml"
-        export_landmarks_xml(
-            landmarks_path, self.state.landmarks, self.scale
-        )
+        export_landmarks_xml(landmarks_path, self.state.landmarks, self.scale)
         # Export AR XML
         ar_path = base_path + "_AR.xml"
         export_ar_xml(ar_path, self.state.active_regions, self.scale)
