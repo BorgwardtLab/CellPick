@@ -186,3 +186,198 @@ class ClickableColorLabel(QLabel):
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
+
+
+class LoadLabelsDialog(QDialog):
+    """Dialog for loading cell labels from CSV or SpatialData table."""
+
+    def __init__(self, spatial_data_loader=None, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Load Cell Labels")
+        self.setMinimumWidth(400)
+
+        self.spatial_data_loader = spatial_data_loader
+        self.selected_source = None  # 'csv' or 'spatialdata'
+        self.csv_path = None
+        self.table_name = None
+        self.column_name = None
+
+        from PySide6.QtWidgets import (
+            QRadioButton,
+            QButtonGroup,
+            QHBoxLayout,
+            QFileDialog,
+            QComboBox,
+            QGroupBox,
+        )
+
+        layout = QVBoxLayout(self)
+
+        # Source selection
+        source_group = QGroupBox("Select Label Source")
+        source_layout = QVBoxLayout(source_group)
+
+        self.button_group = QButtonGroup()
+        self.csv_radio = QRadioButton("Load from CSV file")
+        self.spatialdata_radio = QRadioButton("Load from SpatialData table")
+
+        self.button_group.addButton(self.csv_radio)
+        self.button_group.addButton(self.spatialdata_radio)
+
+        source_layout.addWidget(self.csv_radio)
+        source_layout.addWidget(self.spatialdata_radio)
+
+        # CSV file selection
+        csv_group = QGroupBox("CSV File")
+        csv_layout = QHBoxLayout(csv_group)
+        self.csv_path_label = QLabel("No file selected")
+        self.csv_browse_btn = QPushButton("Browse...")
+        self.csv_browse_btn.clicked.connect(self.browse_csv)
+        csv_layout.addWidget(self.csv_path_label)
+        csv_layout.addWidget(self.csv_browse_btn)
+
+        # SpatialData table selection
+        sd_group = QGroupBox("SpatialData Table")
+        sd_layout = QVBoxLayout(sd_group)
+
+        table_layout = QHBoxLayout()
+        table_layout.addWidget(QLabel("Table:"))
+        self.table_combo = QComboBox()
+        self.table_combo.currentTextChanged.connect(self.on_table_changed)
+        table_layout.addWidget(self.table_combo)
+
+        column_layout = QHBoxLayout()
+        column_layout.addWidget(QLabel("Column:"))
+        self.column_combo = QComboBox()
+        column_layout.addWidget(self.column_combo)
+
+        id_layout = QHBoxLayout()
+        id_layout.addWidget(QLabel("ID Column:"))
+        self.id_combo = QComboBox()
+        id_layout.addWidget(self.id_combo)
+
+        sd_layout.addLayout(table_layout)
+        sd_layout.addLayout(id_layout)
+        sd_layout.addLayout(column_layout)
+
+        # Populate SpatialData options if available
+        if self.spatial_data_loader:
+            tables = self.spatial_data_loader.get_available_tables()
+            self.table_combo.addItems(tables)
+            if tables:
+                self.on_table_changed(tables[0])
+        else:
+            self.spatialdata_radio.setEnabled(False)
+            sd_group.setEnabled(False)
+
+        # OK/Cancel buttons
+        button_layout = QHBoxLayout()
+        self.ok_btn = QPushButton("OK")
+        self.ok_btn.clicked.connect(self.accept)
+        self.cancel_btn = QPushButton("Cancel")
+        self.cancel_btn.clicked.connect(self.reject)
+        button_layout.addWidget(self.ok_btn)
+        button_layout.addWidget(self.cancel_btn)
+
+        # Add to main layout
+        layout.addWidget(source_group)
+        layout.addWidget(csv_group)
+        layout.addWidget(sd_group)
+        layout.addLayout(button_layout)
+
+        # Connect radio buttons to enable/disable groups
+        self.csv_radio.toggled.connect(lambda checked: csv_group.setEnabled(checked))
+        self.spatialdata_radio.toggled.connect(
+            lambda checked: sd_group.setEnabled(checked)
+        )
+
+        # Set default
+        self.csv_radio.setChecked(True)
+        sd_group.setEnabled(False)
+
+    def browse_csv(self):
+        """Open file dialog to select CSV file."""
+        from PySide6.QtWidgets import QFileDialog
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Select CSV File", "", "CSV Files (*.csv);;All Files (*)"
+        )
+        if file_path:
+            self.csv_path = file_path
+            self.csv_path_label.setText(file_path.split("/")[-1])
+
+    def on_table_changed(self, table_name):
+        """Update column combo when table selection changes."""
+        if not self.spatial_data_loader or not table_name:
+            return
+
+        # Get categorical columns for this table (label candidates)
+        columns = self.spatial_data_loader.get_categorical_columns(table_name)
+        self.column_combo.clear()
+        self.column_combo.addItems(columns)
+
+        # Populate ID column candidates by scanning all obs columns for common id names
+        self.id_combo.clear()
+        try:
+            table = self.spatial_data_loader.sdata.tables[table_name]
+            obs_cols = list(table.obs.columns)
+        except Exception:
+            obs_cols = []
+
+        # Candidate id columns: those containing 'cell_id' or 'id'
+        id_candidates = [
+            c
+            for c in obs_cols
+            if "cell_id" in c.lower() or c.lower() == "id" or c.lower().endswith("_id")
+        ]
+        # Ensure 'index' is an option (uses row index)
+        id_options = id_candidates.copy()
+        if "index" not in id_options:
+            id_options.insert(0, "index")
+
+        # If no candidates found, fall back to using 'index'
+        if not id_candidates:
+            id_options = ["index"] + obs_cols[:]
+
+        self.id_combo.addItems(id_options)
+
+        # Prefer a column that contains 'cell_id' as default if present
+        default_choice = None
+        for c in obs_cols:
+            if "cell_id" in c.lower():
+                default_choice = c
+                break
+        if default_choice:
+            idx = self.id_combo.findText(default_choice)
+            if idx >= 0:
+                self.id_combo.setCurrentIndex(idx)
+
+    def accept(self):
+        """Validate and accept the dialog."""
+        if self.csv_radio.isChecked():
+            if not self.csv_path:
+                from PySide6.QtWidgets import QMessageBox
+
+                QMessageBox.warning(
+                    self, "No File Selected", "Please select a CSV file."
+                )
+                return
+            self.selected_source = "csv"
+        elif self.spatialdata_radio.isChecked():
+            self.table_name = self.table_combo.currentText()
+            self.column_name = self.column_combo.currentText()
+            # ID column selection (may be 'index' meaning use row index)
+            try:
+                self.id_column = self.id_combo.currentText()
+            except Exception:
+                self.id_column = None
+            if not self.table_name or not self.column_name:
+                from PySide6.QtWidgets import QMessageBox
+
+                QMessageBox.warning(
+                    self, "Incomplete Selection", "Please select both table and column."
+                )
+                return
+            self.selected_source = "spatialdata"
+
+        super().accept()

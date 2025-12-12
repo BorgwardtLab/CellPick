@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QColorDialog,
     QComboBox,
+    QDialog,
     QFileDialog,
     QGraphicsPixmapItem,
     QGraphicsPolygonItem,
@@ -152,6 +153,7 @@ class SelectionPage(QWidget):
         self.add_spatialdata_btn = AnimatedButton("Add spatial data")
         self.add_channel_btn = AnimatedButton("Add channel")
         self.load_shapes_btn = AnimatedButton("Load shapes")
+        self.load_labels_btn = AnimatedButton("Load labels")
         self.load_calibration_btn = AnimatedButton("Load File", size=(32, 96))
         self.manual_calibration_btn = AnimatedButton("Manual", size=(32, 96))
         self.confirm_calibration_btn = AnimatedButton("Calibrate")
@@ -171,6 +173,7 @@ class SelectionPage(QWidget):
         button_layout1.addWidget(self.add_channel_btn)
         button_layout1.addWidget(self.channel_control_panel)
         button_layout1.addWidget(self.load_shapes_btn)
+        button_layout1.addWidget(self.load_labels_btn)
         button_layout2.addWidget(QLabel("Brightness"))
         button_layout2.addWidget(self.gamma_slider)
         button_layout2.addWidget(QLabel("Contrast"))
@@ -233,6 +236,9 @@ class ActionPage(QWidget):
     export_spatialdata_btn: AnimatedButton
     load_lnd_btn: AnimatedButton
     load_ar_btn: AnimatedButton
+    clustering_type: QComboBox
+    label_checkboxes_container: QWidget
+    label_checkboxes: dict
     buttons: List[Any]
 
     def __init__(self) -> None:
@@ -264,7 +270,13 @@ class ActionPage(QWidget):
         self.clustering_type.addItems(
             ["Select k over union of regions", "Select k per region"]
         )
-        # Label-based options will be added dynamically when spatial data is loaded
+        self.label_checkboxes = {}
+        # Container for label checkboxes (initially hidden)
+        self.label_checkboxes_container = QWidget()
+        self.label_checkboxes_layout = QVBoxLayout(self.label_checkboxes_container)
+        self.label_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
+        self.label_checkboxes_container.hide()
+
         self.add_shapes_btn = AnimatedButton("Add", size=(32, 96))
         self.rem_shapes_btn = AnimatedButton("Delete", size=(32, 96))
         self.export_btn = AnimatedButton(
@@ -302,6 +314,8 @@ class ActionPage(QWidget):
         button_layout2.addWidget(self.delete_ar_btn)
         button_layout3.addWidget(self.k_box)
         button_layout3.addWidget(self.clustering_type)
+        # Add label checkboxes container
+        button_layout3.addWidget(self.label_checkboxes_container)
         button_layout3.addWidget(self.select_shapes_btn)
 
         subwidget3 = QWidget()
@@ -325,6 +339,82 @@ class ActionPage(QWidget):
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.back_btn)
         self.buttons = self.findChildren(AnimatedButton)
+
+    def update_label_checkboxes(self, labels: dict) -> None:
+        """
+        Update the label checkboxes based on loaded labels.
+
+        Parameters
+        ----------
+        labels : dict
+            Dictionary mapping label values to RGB colors (RGB 0-255 tuples)
+        """
+        # Clear existing checkboxes
+        for checkbox in self.label_checkboxes.values():
+            checkbox.deleteLater()
+        self.label_checkboxes.clear()
+
+        # Create new checkboxes for each label with color indicator
+        for label in sorted(labels.keys()):
+            # Create a container widget for checkbox + color indicator
+            container = QWidget()
+            h_layout = QHBoxLayout(container)
+            h_layout.setContentsMargins(0, 0, 0, 0)
+            h_layout.setSpacing(6)
+
+            checkbox = QCheckBox(str(label))
+            checkbox.setChecked(True)  # All selected by default
+
+            # Create color indicator (small colored square)
+            color_label = QLabel()
+            color_label.setFixedSize(16, 16)
+            rgb = labels[label]
+            color_label.setStyleSheet(
+                f"background-color: rgb({int(rgb[0])}, {int(rgb[1])}, {int(rgb[2])}); "
+                f"border: 1px solid #666; border-radius: 2px;"
+            )
+
+            h_layout.addWidget(color_label)
+            h_layout.addWidget(checkbox)
+            h_layout.addStretch()
+
+            self.label_checkboxes[label] = checkbox
+            self.label_checkboxes_layout.addWidget(container)
+
+        # Add "Select k per label" option to clustering type if not already present
+        if self.clustering_type.count() == 2:
+            self.clustering_type.addItem("Select k per label")
+
+    def get_selected_labels(self) -> Optional[List[Any]]:
+        """
+        Get list of selected labels from checkboxes.
+
+        Returns
+        -------
+        Optional[List[Any]]
+            List of selected label values, or None if no labels are loaded
+        """
+        if not self.label_checkboxes:
+            return None
+        return [
+            label
+            for label, checkbox in self.label_checkboxes.items()
+            if checkbox.isChecked()
+        ]
+
+    def show_label_checkboxes(self, show: bool) -> None:
+        """
+        Show or hide the label checkboxes container.
+
+        Parameters
+        ----------
+        show : bool
+            Whether to show the checkboxes
+        """
+        if show:
+            self.label_checkboxes_container.show()
+        else:
+            self.label_checkboxes_container.hide()
         self.buttons.append(self.k_box)
 
 
@@ -405,6 +495,7 @@ class MainWindow(QMainWindow):
         self.page1.next_btn.clicked.connect(self.goto_second_page)
         self.page2.back_btn.clicked.connect(self.goto_first_page)
         self.page1.load_shapes_btn.clicked.connect(self.load_shapes)
+        self.page1.load_labels_btn.clicked.connect(self.load_labels)
         self.page1.load_calibration_btn.clicked.connect(self.load_calibration)
         self.page1.manual_calibration_btn.clicked.connect(self.manual_calibration)
         self.page1.confirm_calibration_btn.clicked.connect(self.confirm_calibration)
@@ -429,6 +520,9 @@ class MainWindow(QMainWindow):
         self.page2.export_spatialdata_btn.clicked.connect(self.export_to_spatialdata)
         self.page2.load_lnd_btn.clicked.connect(self.load_landmarks_from_file)
         self.page2.load_ar_btn.clicked.connect(self.load_ar_from_file)
+        self.page2.clustering_type.currentIndexChanged.connect(
+            self.on_clustering_type_changed
+        )
         self.reset_home_buttons()
         self.state.state = AppState.MAIN
         self.reset_main_buttons()
@@ -622,6 +716,8 @@ class MainWindow(QMainWindow):
             QApplication.processEvents()
 
             loader = SpatialDataLoader(zarr_path)
+            # Store the loader for later use (e.g., loading labels)
+            self.spatial_data_loader = loader
             progress.setValue(20)
             QApplication.processEvents()
 
@@ -717,8 +813,14 @@ class MainWindow(QMainWindow):
 
                 if polygons:
                     self.state.reset_shapes()
-                    for points, label in polygons:
-                        polygon = Polygon(points, label)
+                    for item in polygons:
+                        if len(item) == 3:
+                            points, label, original_id = item
+                            polygon = Polygon(points, label, original_id=original_id)
+                        else:
+                            # Fallback for old format
+                            points, label = item
+                            polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
 
@@ -1189,6 +1291,65 @@ class MainWindow(QMainWindow):
                 self, "XML Parsing Error", f"Failed to parse XML file:\n{str(e)}"
             )
 
+    def load_labels(self) -> None:
+        """Load cell labels from CSV or SpatialData table."""
+        from .ui_components import LoadLabelsDialog
+
+        # Check if shapes are loaded
+        if not self.state.shapes:
+            QMessageBox.warning(self, "No Shapes", "Please load cell shapes first.")
+            return
+
+        # Get the SpatialDataLoader if one exists
+        spatial_data_loader = getattr(self, "spatial_data_loader", None)
+
+        # Open dialog
+        dialog = LoadLabelsDialog(spatial_data_loader, self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        # Load labels based on selected source
+        labels_dict = None
+        if dialog.selected_source == "csv":
+            from .spatialdata_io import SpatialDataLoader
+
+            labels_dict = SpatialDataLoader.load_labels_from_csv(dialog.csv_path)
+            if labels_dict is None:
+                QMessageBox.critical(
+                    self, "Error", "Failed to load labels from CSV file."
+                )
+                return
+        elif dialog.selected_source == "spatialdata":
+            if spatial_data_loader:
+                labels_dict = spatial_data_loader.get_cell_labels(
+                    dialog.column_name,
+                    dialog.table_name,
+                    instance_column=getattr(dialog, "id_column", None),
+                )
+                if labels_dict is None:
+                    QMessageBox.critical(
+                        self,
+                        "Error",
+                        f"Failed to load labels from table '{dialog.table_name}'.",
+                    )
+                    return
+            else:
+                QMessageBox.warning(
+                    self, "No SpatialData", "No SpatialData file is loaded."
+                )
+                return
+
+        # Load labels into state
+        if labels_dict:
+            self.state.load_cell_labels(labels_dict)
+            # Update label checkboxes in UI
+            self.page2.update_label_checkboxes(self.state.label_colors)
+            QMessageBox.information(
+                self,
+                "Success",
+                f"Loaded labels for {len(labels_dict)} cells.",
+            )
+
     def reset_home_buttons(self) -> None:
         assert self.state.state == AppState.HOME
         for button in self.page1.buttons:
@@ -1337,6 +1498,22 @@ class MainWindow(QMainWindow):
 
     def select_shapes(self) -> None:
         self.state.select_shapes(self.page2.k_box.value())
+
+    def on_clustering_type_changed(self, index: int) -> None:
+        """
+        Handle clustering type selection changes.
+        Show label checkboxes when 'Select k per label' is selected.
+
+        Parameters
+        ----------
+        index : int
+            Index of the selected clustering type
+        """
+        # Show checkboxes only if "Select k per label" is selected (index 2)
+        if index == 2 and self.page2.label_checkboxes:
+            self.page2.show_label_checkboxes(True)
+        else:
+            self.page2.show_label_checkboxes(False)
 
     def toggle_shape_add(self) -> None:
         if self.state.state == AppState.MAIN:

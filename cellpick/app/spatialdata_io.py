@@ -177,7 +177,10 @@ class SpatialDataLoader:
         return categorical_cols
 
     def get_cell_labels(
-        self, label_column: str, table_name: Optional[str] = None
+        self,
+        label_column: str,
+        table_name: Optional[str] = None,
+        instance_column: Optional[str] = None,
     ) -> Optional[Dict[int, Any]]:
         """
         Get labels for each cell from a table column.
@@ -211,29 +214,83 @@ class SpatialDataLoader:
         if hasattr(table, "obs") and label_column in table.obs.columns:
             labels_dict = {}
 
-            # Try to get instance_key for linking to segmentation
+            # Determine which column contains instance IDs. Preference order:
+            # 1) caller-provided instance_column
+            # 2) spatialdata_attrs.instance_key
+            # 3) any obs column containing 'cell_id' or ending with '_id'
+            # 4) fallback to row index
             instance_key = None
-            if hasattr(table, "uns") and "spatialdata_attrs" in table.uns:
+            if instance_column and instance_column in table.obs.columns:
+                instance_key = instance_column
+
+            if (
+                instance_key is None
+                and hasattr(table, "uns")
+                and "spatialdata_attrs" in table.uns
+            ):
                 attrs = table.uns["spatialdata_attrs"]
                 if "instance_key" in attrs:
-                    instance_key = attrs["instance_key"]
+                    cand = attrs["instance_key"]
+                    if cand in table.obs.columns:
+                        instance_key = cand
 
-            if instance_key and instance_key in table.obs.columns:
-                # Map using instance_key (typically cell IDs from segmentation)
-                for idx in range(len(table.obs)):
-                    cell_id = table.obs.iloc[idx][instance_key]
-                    label_value = table.obs.iloc[idx][label_column]
-                    # Use 0-based indexing (cell_id - 1) since CellPick uses 0-based indices
-                    if isinstance(cell_id, (int, np.integer)):
-                        labels_dict[int(cell_id) - 1] = label_value
-                    else:
-                        # If cell_id is not an integer, try to use the row index
-                        labels_dict[idx] = label_value
+            if instance_key is None:
+                for c in table.obs.columns:
+                    if "cell_id" in c.lower() or c.lower().endswith("_id"):
+                        instance_key = c
+                        break
+
+            if instance_key is None:
+                instance_key = "index"
+
+            # Gather instance values and labels
+            if instance_key == "index":
+                instances = table.obs.index.tolist()
             else:
-                # Fallback: use sequential indices
-                for idx in range(len(table.obs)):
-                    label_value = table.obs.iloc[idx][label_column]
-                    labels_dict[idx] = label_value
+                instances = (
+                    table.obs[instance_key].tolist()
+                    if instance_key in table.obs.columns
+                    else table.obs.index.tolist()
+                )
+
+            label_values = table.obs[label_column].tolist()
+
+            # Helper to coerce values to int when possible
+            def _coerce_int(v):
+                try:
+                    if isinstance(v, (int, np.integer)):
+                        return int(v)
+                    if isinstance(v, float) and v.is_integer():
+                        return int(v)
+                    if isinstance(v, str) and v.strip().isdigit():
+                        return int(v.strip())
+                except Exception:
+                    pass
+                return None
+
+            coerced = [_coerce_int(x) for x in instances]
+            numeric_ids = [c for c in coerced if c is not None]
+
+            # Map instance IDs directly to labels WITHOUT modification
+            # The original_id in Polygon objects should match these raw instance IDs
+            for idx, (inst, lbl) in enumerate(zip(instances, label_values)):
+                # Normalize label values
+                try:
+                    if pd.isna(lbl):
+                        lbl = ""
+                    elif isinstance(lbl, str):
+                        lbl = lbl.strip()
+                except Exception:
+                    pass
+
+                cid = _coerce_int(inst)
+                if cid is not None:
+                    # Use the ORIGINAL instance ID as the key (no 0/1-based conversion)
+                    # This must match Polygon.original_id which comes from the segmentation mask
+                    labels_dict[int(cid)] = lbl
+                else:
+                    # Non-numeric ID: use row index as fallback
+                    labels_dict[idx] = lbl
 
             return labels_dict
 
@@ -367,7 +424,7 @@ class SpatialDataLoader:
         min_area: int = 10,
         max_cells: int = 10000,
         progress_callback: Optional[callable] = None,
-    ) -> List[Tuple[List[QPointF], str]]:
+    ) -> List[Tuple[List[QPointF], str, int]]:
         """
         Extract polygons from segmentation labels.
 
@@ -384,8 +441,8 @@ class SpatialDataLoader:
 
         Returns
         -------
-        List[Tuple[List[QPointF], str]]
-            List of (polygon_points, label) tuples.
+        List[Tuple[List[QPointF], str, int]]
+            List of (polygon_points, label, original_mask_id) tuples.
         """
         if not self.get_available_labels():
             return []
@@ -508,7 +565,8 @@ class SpatialDataLoader:
                     QPointF(float(x[1] + col_min), float(x[0] + row_min))
                     for x in coords
                 ]
-                polygons.append((points, f"Cell_{int(label_id)}"))
+                # Store both the label string and the original mask ID
+                polygons.append((points, f"Cell_{int(label_id)}", int(label_id)))
 
         return polygons
 
@@ -743,6 +801,164 @@ class SpatialDataLoader:
 
         print(f"[Load] Loaded {len(active_regions)} active regions")
         return active_regions
+
+    @staticmethod
+    def load_labels_from_csv(csv_path: str) -> Dict[int, Any]:
+        """
+        Load labels from a CSV file.
+
+        The CSV should contain a cell ID column and at least one label column.
+        Cell IDs can be 0-based or 1-based; the method will auto-detect and convert.
+
+        Parameters
+        ----------
+        csv_path : str
+            Path to the CSV file.
+
+        Returns
+        -------
+        Dict[int, Any]
+            Dictionary mapping 0-based cell indices to their labels.
+
+        Raises
+        ------
+        FileNotFoundError
+            If the CSV file does not exist.
+        ValueError
+            If no suitable cell ID column is found.
+        """
+        csv_file = Path(csv_path)
+        if not csv_file.exists():
+            raise FileNotFoundError(f"CSV file not found: {csv_path}")
+
+        df = pd.read_csv(csv_file)
+        print(f"[CSV Loader] Loaded CSV with shape: {df.shape}")
+        print(f"[CSV Loader] Columns: {df.columns.tolist()}")
+
+        # Find cell ID column
+        cell_id_col = None
+        for col in ["CellID", "cell_id", "Cell_ID", "id", "ID", "cell_index", "index"]:
+            if col in df.columns:
+                cell_id_col = col
+                break
+
+        if cell_id_col is None:
+            raise ValueError(
+                f"No cell ID column found. Expected one of: CellID, cell_id, Cell_ID, id, ID, cell_index, index"
+            )
+
+        print(f"[CSV Loader] Using cell ID column: {cell_id_col}")
+
+        # Choose a label column heuristically: prefer the non-ID column with the most
+        # non-null unique values (avoids accidentally picking an empty metadata column).
+        candidate_cols = [c for c in df.columns if c != cell_id_col]
+        if not candidate_cols:
+            raise ValueError("No label column found in CSV")
+
+        # Score columns by number of non-null unique values
+        best_col = None
+        best_score = -1
+        for col in candidate_cols:
+            try:
+                series = df[col]
+                # count non-null unique values excluding empty strings
+                non_null = series.dropna().astype(str).map(lambda s: s.strip())
+                non_null = non_null[non_null != ""]
+                score = non_null.nunique()
+            except Exception:
+                score = 0
+            if score > best_score:
+                best_score = score
+                best_col = col
+
+        label_col = best_col
+        print(f"[CSV Loader] Using label column: {label_col} (score={best_score})")
+
+        labels_dict = {}
+        cell_ids = df[cell_id_col].tolist()
+        label_values = df[label_col].tolist()
+
+        # Helper to coerce to int if possible (strings like '1', floats that are integral)
+        def _coerce_int(x):
+            try:
+                if isinstance(x, (int, np.integer)):
+                    return int(x)
+                if isinstance(x, float) and x.is_integer():
+                    return int(x)
+                if isinstance(x, str):
+                    s = x.strip()
+                    if s.isdigit():
+                        return int(s)
+                    # handle floats in string like '1.0'
+                    if s.replace(".", "", 1).isdigit():
+                        f = float(s)
+                        if f.is_integer():
+                            return int(f)
+            except Exception:
+                pass
+            return None
+
+        coerced_ids = [_coerce_int(cid) for cid in cell_ids]
+        numeric_ids = [c for c in coerced_ids if c is not None]
+        min_id = min(numeric_ids) if numeric_ids else None
+        max_id = max(numeric_ids) if numeric_ids else None
+
+        print(f"[CSV Loader] Cell ID range (coerced): {min_id} to {max_id}")
+
+        # Decide indexing: if min_id == 0 -> 0-based, if min_id == 1 -> 1-based -> convert
+        use_one_based = False
+        if min_id is not None:
+            if min_id == 0:
+                use_one_based = False
+            elif min_id == 1:
+                use_one_based = True
+            else:
+                # heuristic: if max_id equals number of rows, assume 1-based
+                if max_id == len(cell_ids):
+                    use_one_based = True
+
+        duplicates = {}
+        for i, (raw_id, label) in enumerate(zip(cell_ids, label_values)):
+            cid = coerced_ids[i]
+            if cid is None:
+                # non-numeric id: use sequential index
+                mapped = len(labels_dict)
+            else:
+                mapped = cid - 1 if use_one_based else cid
+
+            # Normalize label
+            try:
+                if pd.isna(label):
+                    label = ""
+                elif isinstance(label, str):
+                    label = label.strip()
+            except Exception:
+                pass
+
+            if mapped in labels_dict:
+                # duplicate assignment
+                duplicates.setdefault(mapped, 0)
+                duplicates[mapped] += 1
+
+            labels_dict[int(mapped)] = label
+
+        # Logging summary
+        try:
+            from collections import Counter
+
+            cnt = Counter(labels_dict.values())
+            print(
+                f"[CSV Loader] Loaded {len(labels_dict)} labels (duplicates: {len(duplicates)})"
+            )
+            print(f"[CSV Loader] Unique labels ({len(cnt)}): {list(cnt.keys())}")
+            print(f"[CSV Loader] Counts per label: {dict(cnt)}")
+            print(
+                f"[CSV Loader] Sample mapping: {dict(list(labels_dict.items())[:10])}"
+            )
+        except Exception:
+            pass
+
+        return labels_dict
 
 
 class SpatialDataExporter:
