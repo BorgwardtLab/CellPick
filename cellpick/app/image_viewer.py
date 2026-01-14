@@ -176,12 +176,53 @@ class ImageViewer(QWidget):
 
         has_selected_shapes = len(self.state.selected_shape_ids) > 0
 
+        # Check if labels are loaded
+        use_label_colors = (
+            self.state.cell_labels is not None and self.state.label_colors is not None
+        )
+
+        if use_label_colors:
+            print(
+                f"[Polygon Display] Using label colors: {len(self.state.cell_labels)} labels, {len(self.state.label_colors)} colors"
+            )
+
         for idx, polygon in enumerate(self.state.shapes):
-            # Use gradient color if shape has a score, otherwise use user-selected color
-            if polygon.score is not None:
+            # Priority: 1) Label colors, 2) Score colors, 3) User-selected color
+            if use_label_colors and idx in self.state.cell_labels:
+                # Color by label using Tab10/Tab20 palette
+                label = self.state.cell_labels[idx]
+                if label in self.state.label_colors:
+                    rgb = self.state.label_colors[label]
+                    color = QColor(rgb[0], rgb[1], rgb[2])
+                    fill_color = QColor(rgb[0], rgb[1], rgb[2], 128)  # Alpha 0.5
+                else:
+                    # Fallback if label not in color map
+                    color = QColor(shape_outline_color)
+                    fill_color = QColor(
+                        shape_outline_color.red(),
+                        shape_outline_color.green(),
+                        shape_outline_color.blue(),
+                        128,
+                    )
+            elif polygon.score is not None:
+                # Use gradient color if shape has a score
                 color = QColor(polygon.color)
+                fill_color = QColor(
+                    polygon.color.red(),
+                    polygon.color.green(),
+                    polygon.color.blue(),
+                    128,
+                )  # Alpha 0.5
             else:
+                # Use user-selected color
                 color = QColor(shape_outline_color)
+                fill_color = QColor(
+                    shape_outline_color.red(),
+                    shape_outline_color.green(),
+                    shape_outline_color.blue(),
+                    128,
+                )  # Alpha 0.5
+
             is_selected = idx in self.state.selected_shape_ids
 
             if is_selected:
@@ -189,6 +230,11 @@ class ImageViewer(QWidget):
                 color.setRed(min(255, color.red() + 50))
                 color.setGreen(min(255, color.green() + 50))
                 color.setBlue(min(255, color.blue() + 50))
+                # Update fill color for selected
+                fill_color.setAlpha(128)
+                fill_color.setRed(min(255, fill_color.red() + 50))
+                fill_color.setGreen(min(255, fill_color.green() + 50))
+                fill_color.setBlue(min(255, fill_color.blue() + 50))
                 pen_width = 4
             else:
                 if has_selected_shapes:
@@ -196,16 +242,23 @@ class ImageViewer(QWidget):
                     color.setRed(max(0, int(color.red() * 0.7)))
                     color.setGreen(max(0, int(color.green() * 0.7)))
                     color.setBlue(max(0, int(color.blue() * 0.7)))
+                    # Update fill color for dimmed
+                    fill_color.setAlpha(70)
+                    fill_color.setRed(max(0, int(fill_color.red() * 0.7)))
+                    fill_color.setGreen(max(0, int(fill_color.green() * 0.7)))
+                    fill_color.setBlue(max(0, int(fill_color.blue() * 0.7)))
                     pen_width = 1
                 else:
                     color.setAlpha(200)
                     color.setRed(min(255, color.red() + 50))
                     color.setGreen(min(255, color.green() + 50))
                     color.setBlue(min(255, color.blue() + 50))
+                    # Fill color already set above with alpha 0.5
                     pen_width = 2
 
             poly_item = QGraphicsPolygonItem(QPolygonF(polygon.points))
             poly_item.setPen(QPen(color, pen_width))
+            poly_item.setBrush(fill_color)
             poly_item.setZValue(3)
             self.graphics_view.scene.addItem(poly_item)
             self.shape_items.append(poly_item)
@@ -248,7 +301,9 @@ class ImageViewer(QWidget):
         else:
             poly_item.setPen(QPen(Qt.green, 2))
             poly_item.setBrush(QColor(20, 255, 20, 60))
-        poly_item.setZValue(2)
+        poly_item.setZValue(
+            4
+        )  # Higher than shapes (z=3) so landmarks are visible on top
         self.graphics_view.scene.addItem(poly_item)
         self.landmark_items.append(poly_item)
         self.update()
@@ -294,24 +349,39 @@ class ImageViewer(QWidget):
         item = self.ar_items.pop(idx)
         self.graphics_view.scene.removeItem(item)
         self.update()
-    
+
     # Calibration
     def add_calibration_item(self, point: QPointF, idx: int):
         x, y = point.x(), point.y()
-        poly = [ QPointF(x-2, y-100), QPointF(x+2, y-100), QPointF(x+2, y-2), QPointF(x+100, y-2), QPointF(x+100, y+2), QPointF(x+2, y+2), QPointF(x+2, y+100), QPointF(x-2, y+100), QPointF(x-2, y+2), QPointF(x-100, y+2), QPointF(x-100, y-2), QPointF(x-2, y-2) ]
+        poly = [
+            QPointF(x - 2, y - 100),
+            QPointF(x + 2, y - 100),
+            QPointF(x + 2, y - 2),
+            QPointF(x + 100, y - 2),
+            QPointF(x + 100, y + 2),
+            QPointF(x + 2, y + 2),
+            QPointF(x + 2, y + 100),
+            QPointF(x - 2, y + 100),
+            QPointF(x - 2, y + 2),
+            QPointF(x - 100, y + 2),
+            QPointF(x - 100, y - 2),
+            QPointF(x - 2, y - 2),
+        ]
         poly_item = QGraphicsPolygonItem(QPolygonF(poly))
         poly_item.setPen(QPen(Qt.white, 2))
-        if idx == 0: poly_item.setBrush(QColor(255, 0, 0, 255))
-        if idx == 1: poly_item.setBrush(QColor(0, 255, 0, 255))
-        if idx == 2: poly_item.setBrush(QColor(0, 0, 255, 255))
+        if idx == 0:
+            poly_item.setBrush(QColor(255, 0, 0, 255))
+        if idx == 1:
+            poly_item.setBrush(QColor(0, 255, 0, 255))
+        if idx == 2:
+            poly_item.setBrush(QColor(0, 0, 255, 255))
         poly_item.setZValue(1)
         self.graphics_view.scene.addItem(poly_item)
         self.calibration_items.append(poly_item)
         self.update()
-    
+
     def remove_calibration_items(self):
         for item in self.calibration_items:
             self.graphics_view.scene.removeItem(item)
         self.calibration_items = []
         self.update()
-

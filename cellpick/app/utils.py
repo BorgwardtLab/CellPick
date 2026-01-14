@@ -117,6 +117,54 @@ class DVPXML:
                 self.y_calibration.append(int(y_element.text))
 
 
+class MockDVPXML:
+    """
+    Mock DVPXML class for spatial data that doesn't have original XML.
+    Provides the same interface as DVPXML for export functions.
+    """
+
+    def __init__(self, shapes):
+        """
+        Initialize MockDVPXML with shapes from the application state.
+
+        Parameters
+        ----------
+        shapes : list
+            List of Polygon objects from the application state.
+        """
+        self.shapes = shapes
+        self.n_shapes = len(shapes)
+        # Default calibration points (identity mapping)
+        self.x_calibration = [0, 1000, 2000]
+        self.y_calibration = [0, 1000, 2000]
+        # Create a minimal XML content tree for compatibility
+        self.content = etree.Element("ImageData")
+        gc_elem = etree.SubElement(self.content, "GlobalCoordinates")
+        gc_elem.text = "1"
+
+    def return_shape(self, index: int):
+        """
+        Return shape coordinates for the given index (1-based).
+
+        Parameters
+        ----------
+        index : int
+            Shape index (1-based).
+
+        Returns
+        -------
+        tuple
+            (x_coords, y_coords) as numpy arrays.
+        """
+        if index < 1 or index > len(self.shapes):
+            raise ValueError(f"Shape index {index} out of range")
+
+        shape = self.shapes[index - 1]
+        x_coords = np.array([pt.x() for pt in shape.points])
+        y_coords = np.array([pt.y() for pt in shape.points])
+        return x_coords, y_coords
+
+
 class DVPMETA:
     """
     Class for handling DVP metadata files.
@@ -273,10 +321,6 @@ class ImXML:
         )
 
 
-
-
-
-
 def export_xml(path: str, indices: List[int], dvpxml) -> None:
     """
     Select shapes with ID Shape_index in indices and export them to an XML file.
@@ -302,16 +346,8 @@ def export_xml(path: str, indices: List[int], dvpxml) -> None:
         gc_elem.text = "1"
     # Add calibration points
     for i in range(3):
-        x_val = (
-            dvpxml.x_calibration[i]
-            if i < len(dvpxml.x_calibration)
-            else 0
-        )
-        y_val = (
-            dvpxml.y_calibration[i]
-            if i < len(dvpxml.y_calibration)
-            else 0
-        )
+        x_val = dvpxml.x_calibration[i] if i < len(dvpxml.x_calibration) else 0
+        y_val = dvpxml.y_calibration[i] if i < len(dvpxml.y_calibration) else 0
         x_elem = etree.SubElement(root, f"X_CalibrationPoint_{i+1}")
         x_elem.text = str(x_val)
         y_elem = etree.SubElement(root, f"Y_CalibrationPoint_{i+1}")
@@ -334,9 +370,8 @@ def export_xml(path: str, indices: List[int], dvpxml) -> None:
     tree = etree.ElementTree(root)
     tree.write(path, pretty_print=True, xml_declaration=True, encoding="utf-8")
 
-def export_landmarks_xml(
-    path: str, landmarks: List[List[Any]], scale: float
-) -> None:
+
+def export_landmarks_xml(path: str, landmarks: List[List[Any]], scale: float) -> None:
     """
     Export landmarks (list of list of QPointF) to an XML file.
     """
@@ -355,6 +390,7 @@ def export_landmarks_xml(
             y_elem.text = str(int(pt.y() / scale))
     tree = etree.ElementTree(root)
     tree.write(path, pretty_print=True, xml_declaration=True, encoding="utf-8")
+
 
 def export_ar_xml(path: str, ars: List[List[Any]], scale: float) -> None:
     """
