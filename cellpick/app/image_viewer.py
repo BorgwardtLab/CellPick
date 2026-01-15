@@ -31,6 +31,12 @@ from shapely.geometry import MultiPoint
 from .components import CHANNEL_COLORS, AppState, ImageChannel, Polygon
 from .ui_components import PolygonPreviewItem
 
+ALPHA_BASE1 = 200
+ALPHA_BASE2 = 100
+ALPHA_ENABLED1 = 240
+ALPHA_ENABLED2 = 160
+ALPHA_DISABLED1 = 100
+ALPHA_DISABLED2 = 50
 
 class ZoomableGraphicsView(QGraphicsView):
     scene: QGraphicsScene
@@ -181,10 +187,10 @@ class ImageViewer(QWidget):
             self.state.cell_labels is not None and self.state.label_colors is not None
         )
 
-        if use_label_colors:
-            print(
-                f"[Polygon Display] Using label colors: {len(self.state.cell_labels)} labels, {len(self.state.label_colors)} colors"
-            )
+        # if use_label_colors:
+        #     print(
+        #         f"[Polygon Display] Using label colors: {len(self.state.cell_labels)} labels, {len(self.state.label_colors)} colors"
+        #     )
 
         for idx, polygon in enumerate(self.state.shapes):
             # Priority: 1) Label colors, 2) Score colors, 3) User-selected color
@@ -226,34 +232,38 @@ class ImageViewer(QWidget):
             is_selected = idx in self.state.selected_shape_ids
 
             if is_selected:
-                color.setAlpha(200)
+                color.setAlpha(ALPHA_ENABLED1)
                 color.setRed(min(255, color.red() + 50))
                 color.setGreen(min(255, color.green() + 50))
                 color.setBlue(min(255, color.blue() + 50))
                 # Update fill color for selected
-                fill_color.setAlpha(128)
+                fill_color.setAlpha(ALPHA_ENABLED2)
                 fill_color.setRed(min(255, fill_color.red() + 50))
                 fill_color.setGreen(min(255, fill_color.green() + 50))
                 fill_color.setBlue(min(255, fill_color.blue() + 50))
                 pen_width = 4
             else:
                 if has_selected_shapes:
-                    color.setAlpha(140)
+                    color.setAlpha(ALPHA_DISABLED1)
                     color.setRed(max(0, int(color.red() * 0.7)))
                     color.setGreen(max(0, int(color.green() * 0.7)))
                     color.setBlue(max(0, int(color.blue() * 0.7)))
                     # Update fill color for dimmed
-                    fill_color.setAlpha(70)
+                    fill_color.setAlpha(ALPHA_DISABLED2)
                     fill_color.setRed(max(0, int(fill_color.red() * 0.7)))
                     fill_color.setGreen(max(0, int(fill_color.green() * 0.7)))
                     fill_color.setBlue(max(0, int(fill_color.blue() * 0.7)))
                     pen_width = 1
                 else:
-                    color.setAlpha(200)
+                    color.setAlpha(ALPHA_BASE1)
                     color.setRed(min(255, color.red() + 50))
                     color.setGreen(min(255, color.green() + 50))
                     color.setBlue(min(255, color.blue() + 50))
-                    # Fill color already set above with alpha 0.5
+                    # Update fill color for selected
+                    fill_color.setAlpha(ALPHA_BASE2)
+                    fill_color.setRed(min(255, fill_color.red() + 50))
+                    fill_color.setGreen(min(255, fill_color.green() + 50))
+                    fill_color.setBlue(min(255, fill_color.blue() + 50))
                     pen_width = 2
 
             poly_item = QGraphicsPolygonItem(QPolygonF(polygon.points))

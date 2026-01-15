@@ -268,7 +268,7 @@ class ActionPage(QWidget):
         self.k_box.setMaximum(10000)
         self.clustering_type = QComboBox()
         self.clustering_type.addItems(
-            ["Select k over union of regions", "Select k per region"]
+            ["Select k over union of regions", "Random", "Select k per region"]
         )
         self.label_checkboxes = {}
         # Container for label checkboxes (initially hidden)
@@ -353,6 +353,14 @@ class ActionPage(QWidget):
         for checkbox in self.label_checkboxes.values():
             checkbox.deleteLater()
         self.label_checkboxes.clear()
+        for i in range(self.label_checkboxes_layout.count()):
+            self.label_checkboxes_layout.itemAt(i).widget().deleteLater()
+
+        if labels is None:
+            # Remove "Select k per label" option to clustering type if present
+            if self.clustering_type.count() == 4: 
+                self.clustering_type.removeItem(3)
+            return
 
         # Create new checkboxes for each label with color indicator
         for label in sorted(labels.keys()):
@@ -382,7 +390,7 @@ class ActionPage(QWidget):
             self.label_checkboxes_layout.addWidget(container)
 
         # Add "Select k per label" option to clustering type if not already present
-        if self.clustering_type.count() == 2:
+        if self.clustering_type.count() == 3:
             self.clustering_type.addItem("Select k per label")
 
     def get_selected_labels(self) -> Optional[List[Any]]:
@@ -570,7 +578,7 @@ class MainWindow(QMainWindow):
         self.state.data_load_mode = DataLoadMode.SPATIALDATA
         # Disable all IMAGE workflow buttons
         self.page1.add_channel_btn.setEnabled(False)
-        self.page1.select_shape_color_btn.setEnabled(False)
+        self.page1.select_shape_color_btn.setEnabled(True)
         self.page1.load_calibration_btn.setEnabled(False)
         self.page1.manual_calibration_btn.setEnabled(False)
         self.page1.confirm_calibration_btn.setEnabled(False)
@@ -925,7 +933,7 @@ class MainWindow(QMainWindow):
                 # Store categorical columns for later use
                 self._spatialdata_categorical_columns = categorical_columns
                 # Update clustering dropdown to include label options
-                self.update_clustering_dropdown_with_labels(categorical_columns)
+                # self.update_clustering_dropdown_with_labels(categorical_columns)
             else:
                 self._spatialdata_categorical_columns = []
 
@@ -1310,6 +1318,7 @@ class MainWindow(QMainWindow):
 
         # Load labels based on selected source
         labels_dict = None
+        delete_labels = False
         if dialog.selected_source == "csv":
             from .spatialdata_io import SpatialDataLoader
 
@@ -1338,6 +1347,8 @@ class MainWindow(QMainWindow):
                     self, "No SpatialData", "No SpatialData file is loaded."
                 )
                 return
+        elif dialog.selected_source == "delete":
+            delete_labels = True
 
         # Load labels into state
         if labels_dict:
@@ -1349,6 +1360,10 @@ class MainWindow(QMainWindow):
                 "Success",
                 f"Loaded labels for {len(labels_dict)} cells.",
             )
+        
+        if delete_labels:
+            self.state.clear_cell_labels()
+            self.page2.update_label_checkboxes(self.state.label_colors)
 
     def reset_home_buttons(self) -> None:
         assert self.state.state == AppState.HOME
@@ -1392,6 +1407,9 @@ class MainWindow(QMainWindow):
         self.page2.rem_shapes_btn.setEnabled(True)
         self.page2.back_btn.setEnabled(True)
 
+        self.page2.clustering_type.setEnabled(True)
+        self.page2.k_box.setEnabled(True)
+
     def toggle_landmark_selection(self) -> None:
         if self.state.state == AppState.MAIN:
             self.state.start_landmark_selection()
@@ -1400,6 +1418,8 @@ class MainWindow(QMainWindow):
                 button.setEnabled(False)
             self.page2.delete_last_point_lnd_btn.setEnabled(True)
             self.page2.add_lnd_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.SELECTING_LND
             self.state.cancel_landmark()
@@ -1427,6 +1447,8 @@ class MainWindow(QMainWindow):
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.delete_lnd_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.DELETING_LND
             self.state.end_landmark_deletion()
@@ -1441,6 +1463,8 @@ class MainWindow(QMainWindow):
                 button.setEnabled(False)
             self.page2.add_ar_btn.setEnabled(True)
             self.page2.delete_last_point_ar_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.SELECTING_AR
             self.state.cancel_ar()
@@ -1468,6 +1492,8 @@ class MainWindow(QMainWindow):
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.delete_ar_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.DELETING_AR
             self.state.end_ar_deletion()
@@ -1510,7 +1536,7 @@ class MainWindow(QMainWindow):
             Index of the selected clustering type
         """
         # Show checkboxes only if "Select k per label" is selected (index 2)
-        if index == 2 and self.page2.label_checkboxes:
+        if index == 3 and self.page2.label_checkboxes:
             self.page2.show_label_checkboxes(True)
         else:
             self.page2.show_label_checkboxes(False)
@@ -1522,6 +1548,8 @@ class MainWindow(QMainWindow):
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.add_shapes_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.ADDING_SHP
             self.state.state = AppState.MAIN
@@ -1532,6 +1560,8 @@ class MainWindow(QMainWindow):
         if self.state.state == AppState.MAIN:
             self.state.state = AppState.DELETING_SHP
             self.page2.rem_shapes_btn.setText("Cancel")
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.rem_shapes_btn.setEnabled(True)
@@ -1787,39 +1817,3 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load ARs: {e}")
 
-    # Call these in MainWindow methods that add/remove landmarks/ARs:
-    def confirm_landmark(self) -> None:
-        self.state.confirm_landmark()
-        self.page2.add_lnd_btn.setText("Add Landmark")
-        self.reset_main_buttons()
-
-    def toggle_landmark_deletion(self) -> None:
-        if self.state.state == AppState.MAIN:
-            self.state.start_landmark_deletion()
-            self.page2.delete_lnd_btn.setText("Cancel")
-            for button in self.page2.buttons:
-                button.setEnabled(False)
-            self.page2.delete_lnd_btn.setEnabled(True)
-        else:
-            assert self.state.state == AppState.DELETING_LND
-            self.state.end_landmark_deletion()
-            self.page2.delete_lnd_btn.setText("Delete Landmark")
-            self.reset_main_buttons()
-
-    def confirm_ar(self) -> None:
-        self.state.confirm_ar()
-        self.page2.add_ar_btn.setText("Add AR")
-        self.reset_main_buttons()
-
-    def toggle_ar_deletion(self) -> None:
-        if self.state.state == AppState.MAIN:
-            self.state.start_ar_deletion()
-            self.page2.delete_ar_btn.setText("Cancel")
-            for button in self.page2.buttons:
-                button.setEnabled(False)
-            self.page2.delete_ar_btn.setEnabled(True)
-        else:
-            assert self.state.state == AppState.DELETING_AR
-            self.state.end_ar_deletion()
-            self.page2.delete_ar_btn.setText("Delete AR")
-            self.reset_main_buttons()

@@ -220,12 +220,15 @@ class LoadLabelsDialog(QDialog):
         self.button_group = QButtonGroup()
         self.csv_radio = QRadioButton("Load from CSV file")
         self.spatialdata_radio = QRadioButton("Load from SpatialData table")
+        self.delete_radio = QRadioButton("Delete labels")
 
         self.button_group.addButton(self.csv_radio)
         self.button_group.addButton(self.spatialdata_radio)
+        self.button_group.addButton(self.delete_radio)
 
         source_layout.addWidget(self.csv_radio)
         source_layout.addWidget(self.spatialdata_radio)
+        source_layout.addWidget(self.delete_radio)
 
         # CSV file selection
         csv_group = QGroupBox("CSV File")
@@ -379,5 +382,7 @@ class LoadLabelsDialog(QDialog):
                 )
                 return
             self.selected_source = "spatialdata"
-
+        elif self.delete_radio.isChecked():
+            self.selected_source = "delete"
+        
         super().accept()
