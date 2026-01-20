@@ -40,7 +40,7 @@ class AnimatedButton(QPushButton):
     def __init__(
         self,
         text: str,
-        size: Tuple[int, int] = (32, 200),
+        size: Tuple[int, int] = (30, 200),
         color1: str = "50,50,50",
         color2: str = "0,0,0",
     ) -> None:

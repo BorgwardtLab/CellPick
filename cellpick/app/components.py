@@ -598,7 +598,7 @@ class AppStateManager:
         polys = []
         for i, idx1 in enumerate(self.selected_shape_ids):
             polys.append([(p.x(), p.y()) for p in self.shapes[idx1].points])
-        if polygon_mindist(polys) < 2.0:
+        if polygon_mindist(polys) < 3.0: # heuristic value of 3px
             QMessageBox.warning(
                 self.main_window, "Warning", f"Some selected shapes are contiguous"
             )
