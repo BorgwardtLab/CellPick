@@ -24,6 +24,7 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import (
+    QAction,
     QColor,
     QFont,
     QIcon,
@@ -52,6 +53,8 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMainWindow,
+    QMenu,
+    QMenuBar,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -523,11 +526,203 @@ class MainWindow(QMainWindow):
         self.page2.clustering_type.currentIndexChanged.connect(
             self.on_clustering_type_changed
         )
+        # Initialize menu bar BEFORE reset_*_buttons (which calls _sync_menu_actions)
+        self._init_menu_bar()
         self.reset_home_buttons()
         self.state.state = AppState.MAIN
         self.reset_main_buttons()
         self.state.state = AppState.HOME
         self.shape_outline_color = QColor(255, 255, 255)
+
+    def _init_menu_bar(self) -> None:
+        """Initialize menu bar with actions mirroring all GUI buttons."""
+        menu_bar = self.menuBar()
+
+        # --- File Menu ---
+        file_menu = menu_bar.addMenu("File")
+        self.action_add_spatialdata = QAction("Add Spatial Data", self)
+        self.action_add_spatialdata.triggered.connect(self.add_spatialdata)
+        file_menu.addAction(self.action_add_spatialdata)
+
+        self.action_add_channel = QAction("Add Channel", self)
+        self.action_add_channel.triggered.connect(self.add_channel)
+        file_menu.addAction(self.action_add_channel)
+
+        self.action_load_shapes = QAction("Load Shapes", self)
+        self.action_load_shapes.triggered.connect(self.load_shapes)
+        file_menu.addAction(self.action_load_shapes)
+
+        self.action_load_labels = QAction("Load Labels", self)
+        self.action_load_labels.triggered.connect(self.load_labels)
+        file_menu.addAction(self.action_load_labels)
+
+        file_menu.addSeparator()
+
+        self.action_export = QAction("Export Selected Shapes", self)
+        self.action_export.triggered.connect(self.export_selected_shapes)
+        file_menu.addAction(self.action_export)
+
+        self.action_export_spatialdata = QAction("Export to SpatialData", self)
+        self.action_export_spatialdata.triggered.connect(self.export_to_spatialdata)
+        file_menu.addAction(self.action_export_spatialdata)
+
+        file_menu.addSeparator()
+
+        action_exit = QAction("Exit", self)
+        action_exit.triggered.connect(self.close)
+        file_menu.addAction(action_exit)
+
+        # --- View Menu ---
+        view_menu = menu_bar.addMenu("View")
+        self.action_refresh = QAction("Refresh", self)
+        self.action_refresh.triggered.connect(self.image_viewer.update_display)
+        view_menu.addAction(self.action_refresh)
+
+        self.action_reset_view = QAction("Reset View", self)
+        self.action_reset_view.triggered.connect(self.reset_view)
+        view_menu.addAction(self.action_reset_view)
+
+        view_menu.addSeparator()
+
+        self.action_next = QAction("Next Page", self)
+        self.action_next.triggered.connect(self.goto_second_page)
+        view_menu.addAction(self.action_next)
+
+        # --- Calibration Menu ---
+        calibration_menu = menu_bar.addMenu("Calibration")
+        self.action_load_calibration = QAction("Load Calibration File", self)
+        self.action_load_calibration.triggered.connect(self.load_calibration)
+        calibration_menu.addAction(self.action_load_calibration)
+
+        self.action_manual_calibration = QAction("Manual Calibration", self)
+        self.action_manual_calibration.triggered.connect(self.manual_calibration)
+        calibration_menu.addAction(self.action_manual_calibration)
+
+        self.action_confirm_calibration = QAction("Confirm Calibration", self)
+        self.action_confirm_calibration.triggered.connect(self.confirm_calibration)
+        calibration_menu.addAction(self.action_confirm_calibration)
+
+        # --- Landmarks Menu ---
+        landmarks_menu = menu_bar.addMenu("Landmarks")
+        self.action_add_landmark = QAction("Add Landmark", self)
+        self.action_add_landmark.triggered.connect(self.toggle_landmark_selection)
+        landmarks_menu.addAction(self.action_add_landmark)
+
+        self.action_confirm_landmark = QAction("Confirm Landmark", self)
+        self.action_confirm_landmark.triggered.connect(self.confirm_landmark)
+        landmarks_menu.addAction(self.action_confirm_landmark)
+
+        self.action_delete_landmark = QAction("Delete Landmark", self)
+        self.action_delete_landmark.triggered.connect(self.toggle_landmark_deletion)
+        landmarks_menu.addAction(self.action_delete_landmark)
+
+        self.action_delete_last_lnd_point = QAction("Delete Last Point", self)
+        self.action_delete_last_lnd_point.triggered.connect(self.delete_last_lnd_point)
+        landmarks_menu.addAction(self.action_delete_last_lnd_point)
+
+        landmarks_menu.addSeparator()
+
+        self.action_load_landmarks = QAction("Load Landmarks from File", self)
+        self.action_load_landmarks.triggered.connect(self.load_landmarks_from_file)
+        landmarks_menu.addAction(self.action_load_landmarks)
+
+        # --- Active Regions Menu ---
+        ar_menu = menu_bar.addMenu("Active Regions")
+        self.action_add_ar = QAction("Add Active Region", self)
+        self.action_add_ar.triggered.connect(self.toggle_ar_selection)
+        ar_menu.addAction(self.action_add_ar)
+
+        self.action_confirm_ar = QAction("Confirm Active Region", self)
+        self.action_confirm_ar.triggered.connect(self.confirm_ar)
+        ar_menu.addAction(self.action_confirm_ar)
+
+        self.action_delete_ar = QAction("Delete Active Region", self)
+        self.action_delete_ar.triggered.connect(self.toggle_ar_deletion)
+        ar_menu.addAction(self.action_delete_ar)
+
+        self.action_delete_last_ar_point = QAction("Delete Last Point", self)
+        self.action_delete_last_ar_point.triggered.connect(self.delete_last_ar_point)
+        ar_menu.addAction(self.action_delete_last_ar_point)
+
+        ar_menu.addSeparator()
+
+        self.action_load_ar = QAction("Load Active Regions from File", self)
+        self.action_load_ar.triggered.connect(self.load_ar_from_file)
+        ar_menu.addAction(self.action_load_ar)
+
+        # --- Shapes Menu ---
+        shapes_menu = menu_bar.addMenu("Shapes")
+        self.action_select_shapes = QAction("Select Shapes", self)
+        self.action_select_shapes.triggered.connect(self.select_shapes)
+        shapes_menu.addAction(self.action_select_shapes)
+
+        self.action_add_shapes = QAction("Add Shapes", self)
+        self.action_add_shapes.triggered.connect(self.toggle_shape_add)
+        shapes_menu.addAction(self.action_add_shapes)
+
+        self.action_rem_shapes = QAction("Remove Shapes", self)
+        self.action_rem_shapes.triggered.connect(self.toggle_shape_rem)
+        shapes_menu.addAction(self.action_rem_shapes)
+
+        # --- Help Menu ---
+        help_menu = menu_bar.addMenu("Help")
+        action_about = QAction("About CellPick", self)
+        action_about.triggered.connect(self._show_about_dialog)
+        help_menu.addAction(action_about)
+
+    def _show_about_dialog(self) -> None:
+        """Show about dialog."""
+        QMessageBox.about(
+            self, "About CellPick", "CellPick\n\nA spatial omics cell selection tool."
+        )
+
+    def _sync_menu_actions(self) -> None:
+        """Sync menu action enabled states with corresponding buttons."""
+        # File menu
+        self.action_add_spatialdata.setEnabled(
+            self.page1.add_spatialdata_btn.isEnabled()
+        )
+        self.action_add_channel.setEnabled(self.page1.add_channel_btn.isEnabled())
+        self.action_load_shapes.setEnabled(self.page1.load_shapes_btn.isEnabled())
+        self.action_load_labels.setEnabled(self.page1.load_labels_btn.isEnabled())
+        self.action_export.setEnabled(self.page2.export_btn.isEnabled())
+        self.action_export_spatialdata.setEnabled(
+            self.page2.export_spatialdata_btn.isEnabled()
+        )
+        # View menu
+        self.action_refresh.setEnabled(self.page1.refresh_btn.isEnabled())
+        self.action_reset_view.setEnabled(self.page1.reset_btn.isEnabled())
+        self.action_next.setEnabled(self.page1.next_btn.isEnabled())
+        # Calibration menu
+        self.action_load_calibration.setEnabled(
+            self.page1.load_calibration_btn.isEnabled()
+        )
+        self.action_manual_calibration.setEnabled(
+            self.page1.manual_calibration_btn.isEnabled()
+        )
+        self.action_confirm_calibration.setEnabled(
+            self.page1.confirm_calibration_btn.isEnabled()
+        )
+        # Landmarks menu
+        self.action_add_landmark.setEnabled(self.page2.add_lnd_btn.isEnabled())
+        self.action_confirm_landmark.setEnabled(self.page2.confirm_lnd_btn.isEnabled())
+        self.action_delete_landmark.setEnabled(self.page2.delete_lnd_btn.isEnabled())
+        self.action_delete_last_lnd_point.setEnabled(
+            self.page2.delete_last_point_lnd_btn.isEnabled()
+        )
+        self.action_load_landmarks.setEnabled(self.page2.load_lnd_btn.isEnabled())
+        # Active Regions menu
+        self.action_add_ar.setEnabled(self.page2.add_ar_btn.isEnabled())
+        self.action_confirm_ar.setEnabled(self.page2.confirm_ar_btn.isEnabled())
+        self.action_delete_ar.setEnabled(self.page2.delete_ar_btn.isEnabled())
+        self.action_delete_last_ar_point.setEnabled(
+            self.page2.delete_last_point_ar_btn.isEnabled()
+        )
+        self.action_load_ar.setEnabled(self.page2.load_ar_btn.isEnabled())
+        # Shapes menu
+        self.action_select_shapes.setEnabled(self.page2.select_shapes_btn.isEnabled())
+        self.action_add_shapes.setEnabled(self.page2.add_shapes_btn.isEnabled())
+        self.action_rem_shapes.setEnabled(self.page2.rem_shapes_btn.isEnabled())
 
     def goto_first_page(self) -> None:
         self.state.state = AppState.ADV_HOME
@@ -1427,6 +1622,7 @@ class MainWindow(QMainWindow):
             button.setEnabled(False)
         self.page1.add_channel_btn.setEnabled(True)
         self.page1.add_spatialdata_btn.setEnabled(True)
+        self._sync_menu_actions()
 
     def enable_adv_home_buttons(self) -> None:
         assert self.state.state == AppState.ADV_HOME
@@ -1435,6 +1631,7 @@ class MainWindow(QMainWindow):
         # self.page1.load_shapes_btn.setEnabled(False)
         # if (len(self.state.calibration_points) == 3) or (self.meta_path is not None):
         #     self.page1.load_shapes_btn.setEnabled(True)
+        self._sync_menu_actions()
 
     def reset_main_buttons(self) -> None:
         assert self.state.state == AppState.MAIN
@@ -1462,6 +1659,7 @@ class MainWindow(QMainWindow):
         self.page2.add_shapes_btn.setEnabled(True)
         self.page2.rem_shapes_btn.setEnabled(True)
         self.page2.back_btn.setEnabled(True)
+        self._sync_menu_actions()
 
     def toggle_landmark_selection(self) -> None:
         if self.state.state == AppState.MAIN:
