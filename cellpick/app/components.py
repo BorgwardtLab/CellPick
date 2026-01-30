@@ -1,10 +1,12 @@
 from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any, List, Optional
+import random
 
 import numpy as np
 from PySide6.QtCore import QPointF, Qt, QTimer
 from PySide6.QtGui import QColor, QPolygonF
+from PySide6.QtWidgets import QMessageBox
 
 from .algorithms import (
     dist_to_polygon,
@@ -12,6 +14,7 @@ from .algorithms import (
     polygon_gonzalez,
     polygon_round_robin_gonzalez,
     round_robin_gonzalez,
+    polygon_mindist
 )
 
 CHANNEL_COLORS = [
@@ -499,7 +502,7 @@ class AppStateManager:
         clustering_index = self.main_window.page2.clustering_type.currentIndex()
 
         # Filter active shapes by selected labels if using label-based selection
-        if clustering_index == 2:
+        if clustering_index == 3:
             # Get selected labels from checkboxes
             selected_labels = self.main_window.page2.get_selected_labels()
             if selected_labels is None:
@@ -533,6 +536,9 @@ class AppStateManager:
 
         if len(active_ids_for_selection) <= k:
             self.selected_shape_ids = active_ids_for_selection
+            QMessageBox.warning(
+                self.main_window, "Warning", f"Could not select {k} shapes, selected {len(self.active_shape_ids)}"
+            )
         elif clustering_index == 0:
             # Select k over union of regions
             polys = []
@@ -542,7 +548,11 @@ class AppStateManager:
             self.selected_shape_ids = [
                 active_ids_for_selection[i] for i in selected_ids
             ]
-        elif clustering_index == 1:
+        elif clustering_index == 1: 
+            # Select randomly
+            selected_ids = sorted(random.sample(range(len(active_ids_for_selection)), k))
+            self.selected_shape_ids = [active_ids_for_selection[i] for i in selected_ids]
+        elif clustering_index == 2:
             # Select k per active region
             point_ids = [[] for _ in self.active_regions]
             polys = [[] for _ in self.active_regions]
@@ -560,15 +570,14 @@ class AppStateManager:
                     [(p.x(), p.y()) for p in self.shapes[i].points]
                 )
             selected_idss = polygon_round_robin_gonzalez(polys, k)
-            if selected_idss is None:
+            if any([len(ids)<k for ids in selected_idss]):
                 QMessageBox.warning(
-                    self.main_window, "Error", f"Could not select {k} shapes per AR"
+                    self.main_window, "Warning", f"Could not select {k} shapes per AR"
                 )
-                return
             self.selected_shape_ids = []
             for i, selected_ids in enumerate(selected_idss):
                 self.selected_shape_ids += [point_ids[i][idx] for idx in selected_ids]
-        elif clustering_index == 2:
+        elif clustering_index == 3:
             # Select k per label
             point_ids = [[] for _ in selected_labels]
             polys = [[] for _ in selected_labels]
@@ -578,14 +587,21 @@ class AppStateManager:
                 point_ids[label_idx].append(i)
                 polys[label_idx].append([(p.x(), p.y()) for p in self.shapes[i].points])
             selected_idss = polygon_round_robin_gonzalez(polys, k)
-            if selected_idss is None:
+            if any([len(ids)<k for ids in selected_idss]):
                 QMessageBox.warning(
-                    self.main_window, "Error", f"Could not select {k} shapes per label"
+                    self.main_window, "Warning", f"Could not select {k} shapes per label"
                 )
-                return
             self.selected_shape_ids = []
             for i, selected_ids in enumerate(selected_idss):
                 self.selected_shape_ids += [point_ids[i][idx] for idx in selected_ids]
+
+        polys = []
+        for i, idx1 in enumerate(self.selected_shape_ids):
+            polys.append([(p.x(), p.y()) for p in self.shapes[idx1].points])
+        if polygon_mindist(polys) < 3.0: # heuristic value of 3px
+            QMessageBox.warning(
+                self.main_window, "Warning", f"Some selected shapes are contiguous"
+            )
 
         self.image_viewer.update_polygon_display()
 
@@ -738,5 +754,4 @@ class AppStateManager:
             self.state = AppState.ADV_HOME
             self.main_window.page1.manual_calibration_btn.setText("Manual")
             self.main_window.enable_adv_home_buttons()
-            # if self.main_window.xml_path is not None:
-            #     QTimer.singleShot(10, self.main_window.load_shapes_and_manual_calibrate)
+            

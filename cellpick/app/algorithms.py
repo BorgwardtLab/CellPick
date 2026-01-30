@@ -74,6 +74,27 @@ def round_robin_gonzalez(points: List[np.ndarray], k: int):
     return centers
 
 
+def polygon_mindist(polys: List[List[Tuple[float, float]]]) -> float:
+    """
+    FInd the minimum pairwise distance in a list of polygons.
+
+    Parameters
+    ----------
+    points : np.ndarray
+        Array of points with shape (n_points, n_features).
+
+    Returns
+    -------
+    float
+    """
+    mindist = 1e10
+    for i in range(len(polys)):
+        for j in range(i+1, len(polys)):
+            mindist = min( mindist, approx_shape_distance(polys[i], polys[j]) )
+            if mindist < 1e-6:
+                break
+    return mindist
+
 def polygon_gonzalez(polys: List[List[Tuple[float, float]]], k: int) -> List[int]:
     """
     Select k centers from a set of polygons using the Gonzalez k-center algorithm.
@@ -131,7 +152,7 @@ def polygon_round_robin_gonzalez(polys: List[List[List[Tuple[float, float]]]], k
 
     for _ in range(0, k):
         for c in range(num_classes):
-            if len(centers[c]) > len(polys[c]):
+            if len(centers[c]) >= len(polys[c]):
                 continue
             idx = np.argmax(dists[c])
             centers[c].append(idx)

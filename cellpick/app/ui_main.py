@@ -228,8 +228,8 @@ class SelectionPage(QWidget):
         self.add_channel_btn = AnimatedButton("Add channel")
         self.load_shapes_btn = AnimatedButton("Load shapes")
         self.load_labels_btn = AnimatedButton("Load labels")
-        self.load_calibration_btn = AnimatedButton("Load File", size=(32, 96))
-        self.manual_calibration_btn = AnimatedButton("Manual", size=(32, 96))
+        self.load_calibration_btn = AnimatedButton("Load File", size=(30, 96))
+        self.manual_calibration_btn = AnimatedButton("Manual", size=(30, 96))
         self.confirm_calibration_btn = AnimatedButton("Calibrate")
         self.select_shape_color_btn = AnimatedButton("Select shape color")
         self.gamma_slider = QSlider(Qt.Horizontal)
@@ -311,7 +311,7 @@ class ActionPage(QWidget):
     load_lnd_btn: AnimatedButton
     load_ar_btn: AnimatedButton
     clustering_type: QComboBox
-    label_checkboxes_container: QWidget
+    #label_checkboxes_container: QWidget
     label_checkboxes: dict
     buttons: List[Any]
 
@@ -328,13 +328,13 @@ class ActionPage(QWidget):
             "Home", color1="87, 143, 202", color2="54, 116, 181"
         )
         self.add_lnd_btn = AnimatedButton("Add Landmark")
-        self.delete_last_point_lnd_btn = AnimatedButton("Undo", size=(32, 96))
-        self.confirm_lnd_btn = AnimatedButton("Confirm", size=(32, 96))
+        self.delete_last_point_lnd_btn = AnimatedButton("Undo", size=(30, 96))
+        self.confirm_lnd_btn = AnimatedButton("Confirm", size=(30, 96))
         self.cancel_lnd_btn = AnimatedButton("Cancel")
         self.delete_lnd_btn = AnimatedButton("Delete Landmark")
         self.add_ar_btn = AnimatedButton("Add AR")
-        self.delete_last_point_ar_btn = AnimatedButton("Undo", size=(32, 96))
-        self.confirm_ar_btn = AnimatedButton("Confirm", size=(32, 96))
+        self.delete_last_point_ar_btn = AnimatedButton("Undo", size=(30, 96))
+        self.confirm_ar_btn = AnimatedButton("Confirm", size=(30, 96))
         self.delete_ar_btn = AnimatedButton("Delete AR")
         self.select_shapes_btn = AnimatedButton("Automatic Selection")
         self.k_box = QSpinBox()
@@ -342,17 +342,19 @@ class ActionPage(QWidget):
         self.k_box.setMaximum(10000)
         self.clustering_type = QComboBox()
         self.clustering_type.addItems(
-            ["Select k over union of regions", "Select k per region"]
+            ["Select k over union of regions", "Random", "Select k per region"]
         )
         self.label_checkboxes = {}
         # Container for label checkboxes (initially hidden)
-        self.label_checkboxes_container = QWidget()
-        self.label_checkboxes_layout = QVBoxLayout(self.label_checkboxes_container)
-        self.label_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
+        #self.label_checkboxes_container = QWidget()
+        # self.label_checkboxes_layout = QVBoxLayout(self.label_checkboxes_container)
+        # self.label_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
+        self.label_checkboxes_container = ScrollableContainer(height=60)
+        self.label_checkboxes_layout = self.label_checkboxes_container.inner_layout
         self.label_checkboxes_container.hide()
 
-        self.add_shapes_btn = AnimatedButton("Add", size=(32, 96))
-        self.rem_shapes_btn = AnimatedButton("Delete", size=(32, 96))
+        self.add_shapes_btn = AnimatedButton("Add", size=(30, 96))
+        self.rem_shapes_btn = AnimatedButton("Delete", size=(30, 96))
         self.export_btn = AnimatedButton(
             "Export as XML",
             color1="34, 197, 94",
@@ -427,6 +429,14 @@ class ActionPage(QWidget):
         for checkbox in self.label_checkboxes.values():
             checkbox.deleteLater()
         self.label_checkboxes.clear()
+        for i in range(self.label_checkboxes_layout.count()):
+            self.label_checkboxes_layout.itemAt(i).widget().deleteLater()
+
+        if labels is None:
+            # Remove "Select k per label" option to clustering type if present
+            if self.clustering_type.count() == 4: 
+                self.clustering_type.removeItem(3)
+            return
 
         # Create new checkboxes for each label with color indicator
         for label in sorted(labels.keys()):
@@ -456,7 +466,7 @@ class ActionPage(QWidget):
             self.label_checkboxes_layout.addWidget(container)
 
         # Add "Select k per label" option to clustering type if not already present
-        if self.clustering_type.count() == 2:
+        if self.clustering_type.count() == 3:
             self.clustering_type.addItem("Select k per label")
 
     def get_selected_labels(self) -> Optional[List[Any]]:
@@ -896,12 +906,6 @@ class MainWindow(QMainWindow):
         This is irreversible without restarting the app.
         """
         self.state.data_load_mode = DataLoadMode.IMAGE
-        # Disable SpatialData button
-        self.page1.add_spatialdata_btn.setEnabled(False)
-        # Disable calibration buttons until shapes are loaded
-        self.page1.load_calibration_btn.setEnabled(False)
-        self.page1.manual_calibration_btn.setEnabled(False)
-        self.page1.confirm_calibration_btn.setEnabled(False)
 
     def set_spatialdata_workflow_mode(self) -> None:
         """
@@ -909,12 +913,69 @@ class MainWindow(QMainWindow):
         This is irreversible without restarting the app.
         """
         self.state.data_load_mode = DataLoadMode.SPATIALDATA
+        
         # Disable all IMAGE workflow buttons
         self.page1.add_channel_btn.setEnabled(False)
         self.page1.select_shape_color_btn.setEnabled(False)
         self.page1.load_calibration_btn.setEnabled(False)
         self.page1.manual_calibration_btn.setEnabled(False)
         self.page1.confirm_calibration_btn.setEnabled(False)
+        
+
+    def _clear_spatialdata_state(self) -> None:
+        """
+        Clear all state related to a previously loaded SpatialData file.
+        This allows loading a new SpatialData file without stacking data.
+        """
+        # Clear image viewer channels
+        self.image_viewer.channels = []
+        self.image_viewer.composite_image = None
+        self.image_viewer.height = None
+        self.image_viewer.width = None
+        self.channels = []
+
+        # Clear channel control panel widgets
+        while self.channel_control.count():
+            item = self.channel_control.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Clear shapes and selections
+        self.state.reset_shapes()
+
+        # Clear landmarks
+        for item in self.image_viewer.landmark_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.landmark_items = []
+        self.state.landmarks = []
+        self.state.current_lnd_points = []
+
+        # Clear active regions
+        for item in self.image_viewer.ar_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.ar_items = []
+        self.state.active_regions = []
+        self.state.current_ar_points = []
+
+        # Clear shape display items
+        for item in self.image_viewer.shape_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.shape_items = []
+
+        # Clear label-related state
+        self.state.cell_labels = None
+        self.state.label_colors = None
+
+        # Reset scale
+        self.scale = 1.0
+
+        # Clear spatialdata-specific attributes
+        self._spatialdata_loader = None
+        self._spatialdata_categorical_columns = []
+        self._loaded_spatialdata_path = None
+        self._spatialdata_scale_factor = 1  # Reset scale factor
+        self.im_xml = None
 
     def _clear_spatialdata_state(self) -> None:
         """
@@ -1065,12 +1126,18 @@ class MainWindow(QMainWindow):
                 self.add_channel_control(
                     channel_name, len(self.image_viewer.channels) - 1
                 )
-                self.state.enable_advanced_home()
+                
                 self.img_stack.setCurrentWidget(self.image_viewer)
 
                 # Set IMAGE workflow mode on first channel load
                 if self.state.data_load_mode == DataLoadMode.NONE:
                     self.set_image_workflow_mode()
+                
+                self.state.enable_advanced_home()
+                # Disable calibration buttons until shapes are loaded
+                self.page1.load_calibration_btn.setEnabled(False)
+                self.page1.manual_calibration_btn.setEnabled(False)
+                self.page1.confirm_calibration_btn.setEnabled(False)
 
     def add_spatialdata(self) -> None:
         """Load data from a SpatialData .zarr store."""
@@ -1424,18 +1491,18 @@ class MainWindow(QMainWindow):
                 # Store categorical columns for later use
                 self._spatialdata_categorical_columns = categorical_columns
                 # Update clustering dropdown to include label options
-                self.update_clustering_dropdown_with_labels(categorical_columns)
+                # self.update_clustering_dropdown_with_labels(categorical_columns)
             else:
                 self._spatialdata_categorical_columns = []
 
             progress.setValue(100)
             progress.close()
 
-            self.state.enable_advanced_home()
-
             # Set SPATIALDATA workflow mode
             if self.state.data_load_mode == DataLoadMode.NONE:
                 self.set_spatialdata_workflow_mode()
+            
+            self.state.enable_advanced_home()
 
             # Build success message
             msg = f"Successfully loaded:\n"
@@ -1623,6 +1690,7 @@ class MainWindow(QMainWindow):
         )
 
     def load_calibration(self) -> None:
+        assert(self.state.data_load_mode == DataLoadMode.IMAGE)
         self.state.calibration_points = []
         self.state.image_viewer.remove_calibration_items()
         if not self.image_viewer.channels:
@@ -1637,6 +1705,7 @@ class MainWindow(QMainWindow):
         self.meta_path = meta_path
 
     def manual_calibration(self) -> None:
+        assert(self.state.data_load_mode == DataLoadMode.IMAGE)
         self.meta_path = None
         if self.state.state == AppState.ADV_HOME:
             self.state.start_calibration_selection()
@@ -1809,6 +1878,7 @@ class MainWindow(QMainWindow):
 
         # Load labels based on selected source
         labels_dict = None
+        delete_labels = False
         if dialog.selected_source == "csv":
             from .spatialdata_io import SpatialDataLoader
 
@@ -1837,6 +1907,8 @@ class MainWindow(QMainWindow):
                     self, "No SpatialData", "No SpatialData file is loaded."
                 )
                 return
+        elif dialog.selected_source == "delete":
+            delete_labels = True
 
         # Load labels into state
         if labels_dict:
@@ -1848,6 +1920,10 @@ class MainWindow(QMainWindow):
                 "Success",
                 f"Loaded labels for {len(labels_dict)} cells.",
             )
+        
+        if delete_labels:
+            self.state.clear_cell_labels()
+            self.page2.update_label_checkboxes(self.state.label_colors)
 
     def reset_home_buttons(self) -> None:
         assert self.state.state == AppState.HOME
@@ -1861,10 +1937,21 @@ class MainWindow(QMainWindow):
         assert self.state.state == AppState.ADV_HOME
         for button in self.page1.buttons:
             button.setEnabled(True)
-        # self.page1.load_shapes_btn.setEnabled(False)
-        # if (len(self.state.calibration_points) == 3) or (self.meta_path is not None):
-        #     self.page1.load_shapes_btn.setEnabled(True)
-        self._sync_menu_actions()
+        
+        if self.state.data_load_mode == DataLoadMode.IMAGE:
+            # Disable SpatialData button
+            self.page1.add_spatialdata_btn.setEnabled(False)
+        else:
+            assert(self.state.data_load_mode == DataLoadMode.SPATIALDATA)
+            # Disable all IMAGE workflow buttons
+            self.page1.add_channel_btn.setEnabled(False)
+            self.page1.select_shape_color_btn.setEnabled(True)
+            self.page1.load_calibration_btn.setEnabled(False)
+            self.page1.manual_calibration_btn.setEnabled(False)
+            self.page1.confirm_calibration_btn.setEnabled(False)
+            self.page1.load_shapes_btn.setEnabled(False)
+
+            self._sync_menu_actions()
 
     def reset_main_buttons(self) -> None:
         assert self.state.state == AppState.MAIN
@@ -1892,6 +1979,9 @@ class MainWindow(QMainWindow):
         self.page2.add_shapes_btn.setEnabled(True)
         self.page2.rem_shapes_btn.setEnabled(True)
         self.page2.back_btn.setEnabled(True)
+        self.page2.clustering_type.setEnabled(True)
+        self.page2.k_box.setEnabled(True)
+
         self._sync_menu_actions()
 
     def toggle_landmark_selection(self) -> None:
@@ -1902,6 +1992,8 @@ class MainWindow(QMainWindow):
                 button.setEnabled(False)
             self.page2.delete_last_point_lnd_btn.setEnabled(True)
             self.page2.add_lnd_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.SELECTING_LND
             self.state.cancel_landmark()
@@ -1929,6 +2021,8 @@ class MainWindow(QMainWindow):
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.delete_lnd_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.DELETING_LND
             self.state.end_landmark_deletion()
@@ -1943,6 +2037,8 @@ class MainWindow(QMainWindow):
                 button.setEnabled(False)
             self.page2.add_ar_btn.setEnabled(True)
             self.page2.delete_last_point_ar_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.SELECTING_AR
             self.state.cancel_ar()
@@ -1970,6 +2066,8 @@ class MainWindow(QMainWindow):
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.delete_ar_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.DELETING_AR
             self.state.end_ar_deletion()
@@ -2012,7 +2110,7 @@ class MainWindow(QMainWindow):
             Index of the selected clustering type
         """
         # Show checkboxes only if "Select k per label" is selected (index 2)
-        if index == 2 and self.page2.label_checkboxes:
+        if index == 3 and self.page2.label_checkboxes:
             self.page2.show_label_checkboxes(True)
         else:
             self.page2.show_label_checkboxes(False)
@@ -2024,6 +2122,8 @@ class MainWindow(QMainWindow):
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.add_shapes_btn.setEnabled(True)
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
         else:
             assert self.state.state == AppState.ADDING_SHP
             self.state.state = AppState.MAIN
@@ -2034,6 +2134,8 @@ class MainWindow(QMainWindow):
         if self.state.state == AppState.MAIN:
             self.state.state = AppState.DELETING_SHP
             self.page2.rem_shapes_btn.setText("Cancel")
+            self.page2.clustering_type.setEnabled(False)
+            self.page2.k_box.setEnabled(False)
             for button in self.page2.buttons:
                 button.setEnabled(False)
             self.page2.rem_shapes_btn.setEnabled(True)
@@ -2341,39 +2443,3 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load ARs: {e}")
 
-    # Call these in MainWindow methods that add/remove landmarks/ARs:
-    def confirm_landmark(self) -> None:
-        self.state.confirm_landmark()
-        self.page2.add_lnd_btn.setText("Add Landmark")
-        self.reset_main_buttons()
-
-    def toggle_landmark_deletion(self) -> None:
-        if self.state.state == AppState.MAIN:
-            self.state.start_landmark_deletion()
-            self.page2.delete_lnd_btn.setText("Cancel")
-            for button in self.page2.buttons:
-                button.setEnabled(False)
-            self.page2.delete_lnd_btn.setEnabled(True)
-        else:
-            assert self.state.state == AppState.DELETING_LND
-            self.state.end_landmark_deletion()
-            self.page2.delete_lnd_btn.setText("Delete Landmark")
-            self.reset_main_buttons()
-
-    def confirm_ar(self) -> None:
-        self.state.confirm_ar()
-        self.page2.add_ar_btn.setText("Add AR")
-        self.reset_main_buttons()
-
-    def toggle_ar_deletion(self) -> None:
-        if self.state.state == AppState.MAIN:
-            self.state.start_ar_deletion()
-            self.page2.delete_ar_btn.setText("Cancel")
-            for button in self.page2.buttons:
-                button.setEnabled(False)
-            self.page2.delete_ar_btn.setEnabled(True)
-        else:
-            assert self.state.state == AppState.DELETING_AR
-            self.state.end_ar_deletion()
-            self.page2.delete_ar_btn.setText("Delete AR")
-            self.reset_main_buttons()
