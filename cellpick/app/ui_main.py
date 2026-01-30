@@ -24,6 +24,7 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import (
+    QAction,
     QColor,
     QFont,
     QIcon,
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QColorDialog,
     QComboBox,
     QDialog,
+    QDialogButtonBox,
     QFileDialog,
     QGraphicsPixmapItem,
     QGraphicsPolygonItem,
@@ -51,7 +53,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMenu,
+    QMenuBar,
     QMessageBox,
     QProgressDialog,
     QPushButton,
@@ -127,6 +133,74 @@ class ScrollableContainer(QWidget):
         scroll.setStyleSheet("background-color: white; border: none")
         scroll.setWidget(content)
         layout.addWidget(scroll)
+
+
+class ResolutionSelectionDialog(QDialog):
+    """
+    Dialog for selecting image resolution level from a multiscale SpatialData image.
+    """
+
+    def __init__(
+        self, level_info: List[dict], parent: Optional[QWidget] = None
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Select Image Resolution")
+        self.setMinimumWidth(450)
+        self.selected_level = 0
+
+        layout = QVBoxLayout(self)
+
+        # Header label
+        header = QLabel(
+            "This image has multiple resolution levels.\n"
+            "Select a resolution to load:"
+        )
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        # List widget for resolution options
+        self.list_widget = QListWidget()
+        self.list_widget.setAlternatingRowColors(True)
+
+        for info in level_info:
+            # Format: "Level 0: 40000 × 30000 (3 channels) - Full resolution"
+            dims = f"{info['width']:,} × {info['height']:,}"
+            channels = (
+                f"{info['channels']} channel{'s' if info['channels'] != 1 else ''}"
+            )
+            text = (
+                f"Level {info['level']}: {dims} ({channels}) - {info['scale_factor']}"
+            )
+            item = QListWidgetItem(text)
+            item.setData(Qt.UserRole, info["level"])
+            self.list_widget.addItem(item)
+
+        # Select the first item by default
+        if self.list_widget.count() > 0:
+            self.list_widget.setCurrentRow(0)
+
+        self.list_widget.itemDoubleClicked.connect(self.accept)
+        layout.addWidget(self.list_widget)
+
+        # Info label
+        info_label = QLabel(
+            "<i>Select a lower resolution level to load faster and use less memory. Exported shapes will be adjusted automatically to full resolution.</i>"
+        )
+        info_label.setWordWrap(True)
+        layout.addWidget(info_label)
+
+        # Dialog buttons
+        button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def get_selected_level(self) -> int:
+        """Return the selected resolution level."""
+        current_item = self.list_widget.currentItem()
+        if current_item:
+            return current_item.data(Qt.UserRole)
+        return 0
 
 
 class SelectionPage(QWidget):
@@ -237,7 +311,7 @@ class ActionPage(QWidget):
     load_lnd_btn: AnimatedButton
     load_ar_btn: AnimatedButton
     clustering_type: QComboBox
-    #label_checkboxes_container: QWidget
+    # label_checkboxes_container: QWidget
     label_checkboxes: dict
     buttons: List[Any]
 
@@ -272,7 +346,7 @@ class ActionPage(QWidget):
         )
         self.label_checkboxes = {}
         # Container for label checkboxes (initially hidden)
-        #self.label_checkboxes_container = QWidget()
+        # self.label_checkboxes_container = QWidget()
         # self.label_checkboxes_layout = QVBoxLayout(self.label_checkboxes_container)
         # self.label_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
         self.label_checkboxes_container = ScrollableContainer(height=60)
@@ -360,7 +434,7 @@ class ActionPage(QWidget):
 
         if labels is None:
             # Remove "Select k per label" option to clustering type if present
-            if self.clustering_type.count() == 4: 
+            if self.clustering_type.count() == 4:
                 self.clustering_type.removeItem(3)
             return
 
@@ -455,6 +529,7 @@ class MainWindow(QMainWindow):
         self._spatialdata_loader = None
         self._spatialdata_categorical_columns = []
         self._loaded_spatialdata_path = None
+        self._spatialdata_scale_factor = 1  # Track scaling for multi-resolution images
         # Set window icon
         current_dir = Path(__file__).parent.parent
         logo_svg_path = current_dir / "assets" / "logo.svg"
@@ -533,19 +608,285 @@ class MainWindow(QMainWindow):
         self.page2.clustering_type.currentIndexChanged.connect(
             self.on_clustering_type_changed
         )
+        # Initialize menu bar BEFORE reset_*_buttons (which calls _sync_menu_actions)
+        self._init_menu_bar()
         self.reset_home_buttons()
         self.state.state = AppState.MAIN
         self.reset_main_buttons()
         self.state.state = AppState.HOME
         self.shape_outline_color = QColor(255, 255, 255)
 
+    def _init_menu_bar(self) -> None:
+        """Initialize menu bar with actions mirroring all GUI buttons."""
+        menu_bar = self.menuBar()
+
+        # --- File Menu ---
+        file_menu = menu_bar.addMenu("File")
+        self.action_add_spatialdata = QAction("Add Spatial Data", self)
+        self.action_add_spatialdata.triggered.connect(self.add_spatialdata)
+        file_menu.addAction(self.action_add_spatialdata)
+
+        self.action_add_channel = QAction("Add Channel", self)
+        self.action_add_channel.triggered.connect(self.add_channel)
+        file_menu.addAction(self.action_add_channel)
+
+        self.action_load_shapes = QAction("Load Shapes", self)
+        self.action_load_shapes.triggered.connect(self.load_shapes)
+        file_menu.addAction(self.action_load_shapes)
+
+        self.action_load_labels = QAction("Load Labels", self)
+        self.action_load_labels.triggered.connect(self.load_labels)
+        file_menu.addAction(self.action_load_labels)
+
+        file_menu.addSeparator()
+
+        self.action_export = QAction("Export Selected Shapes", self)
+        self.action_export.triggered.connect(self.export_selected_shapes)
+        file_menu.addAction(self.action_export)
+
+        self.action_export_spatialdata = QAction("Export to SpatialData", self)
+        self.action_export_spatialdata.triggered.connect(self.export_to_spatialdata)
+        file_menu.addAction(self.action_export_spatialdata)
+
+        file_menu.addSeparator()
+
+        action_exit = QAction("Exit", self)
+        action_exit.triggered.connect(self.close)
+        file_menu.addAction(action_exit)
+
+        # --- View Menu ---
+        view_menu = menu_bar.addMenu("View")
+        self.action_refresh = QAction("Refresh", self)
+        self.action_refresh.triggered.connect(self.image_viewer.update_display)
+        view_menu.addAction(self.action_refresh)
+
+        self.action_reset_view = QAction("Reset View", self)
+        self.action_reset_view.triggered.connect(self.reset_view)
+        view_menu.addAction(self.action_reset_view)
+
+        view_menu.addSeparator()
+
+        self.action_next = QAction("Next Page", self)
+        self.action_next.triggered.connect(self.goto_second_page)
+        view_menu.addAction(self.action_next)
+
+        # --- Calibration Menu ---
+        calibration_menu = menu_bar.addMenu("Calibration")
+        self.action_load_calibration = QAction("Load Calibration File", self)
+        self.action_load_calibration.triggered.connect(self.load_calibration)
+        calibration_menu.addAction(self.action_load_calibration)
+
+        self.action_manual_calibration = QAction("Manual Calibration", self)
+        self.action_manual_calibration.triggered.connect(self.manual_calibration)
+        calibration_menu.addAction(self.action_manual_calibration)
+
+        self.action_confirm_calibration = QAction("Confirm Calibration", self)
+        self.action_confirm_calibration.triggered.connect(self.confirm_calibration)
+        calibration_menu.addAction(self.action_confirm_calibration)
+
+        # --- Landmarks Menu ---
+        landmarks_menu = menu_bar.addMenu("Landmarks")
+        self.action_add_landmark = QAction("Add Landmark", self)
+        self.action_add_landmark.triggered.connect(self.toggle_landmark_selection)
+        landmarks_menu.addAction(self.action_add_landmark)
+
+        self.action_confirm_landmark = QAction("Confirm Landmark", self)
+        self.action_confirm_landmark.triggered.connect(self.confirm_landmark)
+        landmarks_menu.addAction(self.action_confirm_landmark)
+
+        self.action_delete_landmark = QAction("Delete Landmark", self)
+        self.action_delete_landmark.triggered.connect(self.toggle_landmark_deletion)
+        landmarks_menu.addAction(self.action_delete_landmark)
+
+        self.action_delete_last_lnd_point = QAction("Delete Last Point", self)
+        self.action_delete_last_lnd_point.triggered.connect(self.delete_last_lnd_point)
+        landmarks_menu.addAction(self.action_delete_last_lnd_point)
+
+        landmarks_menu.addSeparator()
+
+        self.action_load_landmarks = QAction("Load Landmarks from File", self)
+        self.action_load_landmarks.triggered.connect(self.load_landmarks_from_file)
+        landmarks_menu.addAction(self.action_load_landmarks)
+
+        # --- Active Regions Menu ---
+        ar_menu = menu_bar.addMenu("Active Regions")
+        self.action_add_ar = QAction("Add Active Region", self)
+        self.action_add_ar.triggered.connect(self.toggle_ar_selection)
+        ar_menu.addAction(self.action_add_ar)
+
+        self.action_confirm_ar = QAction("Confirm Active Region", self)
+        self.action_confirm_ar.triggered.connect(self.confirm_ar)
+        ar_menu.addAction(self.action_confirm_ar)
+
+        self.action_delete_ar = QAction("Delete Active Region", self)
+        self.action_delete_ar.triggered.connect(self.toggle_ar_deletion)
+        ar_menu.addAction(self.action_delete_ar)
+
+        self.action_delete_last_ar_point = QAction("Delete Last Point", self)
+        self.action_delete_last_ar_point.triggered.connect(self.delete_last_ar_point)
+        ar_menu.addAction(self.action_delete_last_ar_point)
+
+        ar_menu.addSeparator()
+
+        self.action_load_ar = QAction("Load Active Regions from File", self)
+        self.action_load_ar.triggered.connect(self.load_ar_from_file)
+        ar_menu.addAction(self.action_load_ar)
+
+        # --- Shapes Menu ---
+        shapes_menu = menu_bar.addMenu("Shapes")
+        self.action_select_shapes = QAction("Select Shapes", self)
+        self.action_select_shapes.triggered.connect(self.select_shapes)
+        shapes_menu.addAction(self.action_select_shapes)
+
+        self.action_add_shapes = QAction("Add Shapes", self)
+        self.action_add_shapes.triggered.connect(self.toggle_shape_add)
+        shapes_menu.addAction(self.action_add_shapes)
+
+        self.action_rem_shapes = QAction("Remove Shapes", self)
+        self.action_rem_shapes.triggered.connect(self.toggle_shape_rem)
+        shapes_menu.addAction(self.action_rem_shapes)
+
+        # --- Help Menu ---
+        help_menu = menu_bar.addMenu("Help")
+
+        action_search = QAction("Search...", self)
+        action_search.setShortcut("Ctrl+F")
+        action_search.triggered.connect(self._show_search_dialog)
+        help_menu.addAction(action_search)
+
+        help_menu.addSeparator()
+
+        action_website = QAction("Visit Website", self)
+        action_website.triggered.connect(lambda: self._open_url("https://cellpick.app"))
+        help_menu.addAction(action_website)
+
+        action_docs = QAction("Documentation", self)
+        action_docs.triggered.connect(
+            lambda: self._open_url("https://cellpick.readthedocs.io/en/latest/")
+        )
+        help_menu.addAction(action_docs)
+
+        help_menu.addSeparator()
+
+        action_about = QAction("About CellPick", self)
+        action_about.triggered.connect(self._show_about_dialog)
+        help_menu.addAction(action_about)
+
+    def _open_url(self, url: str) -> None:
+        """Open a URL in the default web browser."""
+        from PySide6.QtGui import QDesktopServices
+        from PySide6.QtCore import QUrl
+
+        QDesktopServices.openUrl(QUrl(url))
+
+    def _show_search_dialog(self) -> None:
+        """Show a search dialog for finding help topics."""
+        from PySide6.QtWidgets import QInputDialog
+
+        text, ok = QInputDialog.getText(
+            self,
+            "Search Help",
+            "Enter search term:",
+        )
+        if ok and text:
+            # Open documentation search
+            search_url = (
+                f"https://cellpick.readthedocs.io/en/latest/search.html?q={text}"
+            )
+            self._open_url(search_url)
+
+    def _show_about_dialog(self) -> None:
+        """Show about dialog."""
+        QMessageBox.about(
+            self, "About CellPick", "CellPick\n\nA spatial omics cell selection tool."
+        )
+
+    def _sync_menu_actions(self) -> None:
+        """Sync menu action enabled states with corresponding buttons and current page."""
+        # Determine which page is currently visible
+        on_page1 = self.stack.currentWidget() == self.page1
+        on_page2 = self.stack.currentWidget() == self.page2
+
+        # File menu - page1 actions
+        self.action_add_spatialdata.setEnabled(
+            on_page1 and self.page1.add_spatialdata_btn.isEnabled()
+        )
+        self.action_add_channel.setEnabled(
+            on_page1 and self.page1.add_channel_btn.isEnabled()
+        )
+        self.action_load_shapes.setEnabled(
+            on_page1 and self.page1.load_shapes_btn.isEnabled()
+        )
+        self.action_load_labels.setEnabled(
+            on_page1 and self.page1.load_labels_btn.isEnabled()
+        )
+        # File menu - page2 actions
+        self.action_export.setEnabled(on_page2 and self.page2.export_btn.isEnabled())
+        self.action_export_spatialdata.setEnabled(
+            on_page2 and self.page2.export_spatialdata_btn.isEnabled()
+        )
+        # View menu - page1 actions
+        self.action_refresh.setEnabled(on_page1 and self.page1.refresh_btn.isEnabled())
+        self.action_reset_view.setEnabled(on_page1 and self.page1.reset_btn.isEnabled())
+        self.action_next.setEnabled(on_page1 and self.page1.next_btn.isEnabled())
+        # Calibration menu - page1 actions
+        self.action_load_calibration.setEnabled(
+            on_page1 and self.page1.load_calibration_btn.isEnabled()
+        )
+        self.action_manual_calibration.setEnabled(
+            on_page1 and self.page1.manual_calibration_btn.isEnabled()
+        )
+        self.action_confirm_calibration.setEnabled(
+            on_page1 and self.page1.confirm_calibration_btn.isEnabled()
+        )
+        # Landmarks menu - page2 actions
+        self.action_add_landmark.setEnabled(
+            on_page2 and self.page2.add_lnd_btn.isEnabled()
+        )
+        self.action_confirm_landmark.setEnabled(
+            on_page2 and self.page2.confirm_lnd_btn.isEnabled()
+        )
+        self.action_delete_landmark.setEnabled(
+            on_page2 and self.page2.delete_lnd_btn.isEnabled()
+        )
+        self.action_delete_last_lnd_point.setEnabled(
+            on_page2 and self.page2.delete_last_point_lnd_btn.isEnabled()
+        )
+        self.action_load_landmarks.setEnabled(
+            on_page2 and self.page2.load_lnd_btn.isEnabled()
+        )
+        # Active Regions menu - page2 actions
+        self.action_add_ar.setEnabled(on_page2 and self.page2.add_ar_btn.isEnabled())
+        self.action_confirm_ar.setEnabled(
+            on_page2 and self.page2.confirm_ar_btn.isEnabled()
+        )
+        self.action_delete_ar.setEnabled(
+            on_page2 and self.page2.delete_ar_btn.isEnabled()
+        )
+        self.action_delete_last_ar_point.setEnabled(
+            on_page2 and self.page2.delete_last_point_ar_btn.isEnabled()
+        )
+        self.action_load_ar.setEnabled(on_page2 and self.page2.load_ar_btn.isEnabled())
+        # Shapes menu - page2 actions
+        self.action_select_shapes.setEnabled(
+            on_page2 and self.page2.select_shapes_btn.isEnabled()
+        )
+        self.action_add_shapes.setEnabled(
+            on_page2 and self.page2.add_shapes_btn.isEnabled()
+        )
+        self.action_rem_shapes.setEnabled(
+            on_page2 and self.page2.rem_shapes_btn.isEnabled()
+        )
+
     def goto_first_page(self) -> None:
         self.state.state = AppState.ADV_HOME
         self.stack.setCurrentWidget(self.page1)
+        self._sync_menu_actions()
 
     def goto_second_page(self) -> None:
         self.state.state = AppState.MAIN
         self.stack.setCurrentWidget(self.page2)
+        self._sync_menu_actions()
 
     def update_gamma(self, value: int) -> None:
         self.image_viewer.gamma = np.exp(value / 20.0)
@@ -572,7 +913,123 @@ class MainWindow(QMainWindow):
         This is irreversible without restarting the app.
         """
         self.state.data_load_mode = DataLoadMode.SPATIALDATA
-        
+
+        # Disable all IMAGE workflow buttons
+        self.page1.add_channel_btn.setEnabled(False)
+        self.page1.select_shape_color_btn.setEnabled(False)
+        self.page1.load_calibration_btn.setEnabled(False)
+        self.page1.manual_calibration_btn.setEnabled(False)
+        self.page1.confirm_calibration_btn.setEnabled(False)
+
+    def _clear_spatialdata_state(self) -> None:
+        """
+        Clear all state related to a previously loaded SpatialData file.
+        This allows loading a new SpatialData file without stacking data.
+        """
+        # Clear image viewer channels
+        self.image_viewer.channels = []
+        self.image_viewer.composite_image = None
+        self.image_viewer.height = None
+        self.image_viewer.width = None
+        self.channels = []
+
+        # Clear channel control panel widgets
+        while self.channel_control.count():
+            item = self.channel_control.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Clear shapes and selections
+        self.state.reset_shapes()
+
+        # Clear landmarks
+        for item in self.image_viewer.landmark_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.landmark_items = []
+        self.state.landmarks = []
+        self.state.current_lnd_points = []
+
+        # Clear active regions
+        for item in self.image_viewer.ar_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.ar_items = []
+        self.state.active_regions = []
+        self.state.current_ar_points = []
+
+        # Clear shape display items
+        for item in self.image_viewer.shape_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.shape_items = []
+
+        # Clear label-related state
+        self.state.cell_labels = None
+        self.state.label_colors = None
+
+        # Reset scale
+        self.scale = 1.0
+
+        # Clear spatialdata-specific attributes
+        self._spatialdata_loader = None
+        self._spatialdata_categorical_columns = []
+        self._loaded_spatialdata_path = None
+        self._spatialdata_scale_factor = 1  # Reset scale factor
+        self.im_xml = None
+
+    def _clear_spatialdata_state(self) -> None:
+        """
+        Clear all state related to a previously loaded SpatialData file.
+        This allows loading a new SpatialData file without stacking data.
+        """
+        # Clear image viewer channels
+        self.image_viewer.channels = []
+        self.image_viewer.composite_image = None
+        self.image_viewer.height = None
+        self.image_viewer.width = None
+        self.channels = []
+
+        # Clear channel control panel widgets
+        while self.channel_control.count():
+            item = self.channel_control.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Clear shapes and selections
+        self.state.reset_shapes()
+
+        # Clear landmarks
+        for item in self.image_viewer.landmark_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.landmark_items = []
+        self.state.landmarks = []
+        self.state.current_lnd_points = []
+
+        # Clear active regions
+        for item in self.image_viewer.ar_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.ar_items = []
+        self.state.active_regions = []
+        self.state.current_ar_points = []
+
+        # Clear shape display items
+        for item in self.image_viewer.shape_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.shape_items = []
+
+        # Clear label-related state
+        self.state.cell_labels = None
+        self.state.label_colors = None
+
+        # Reset scale
+        self.scale = 1.0
+
+        # Clear spatialdata-specific attributes
+        self._spatialdata_loader = None
+        self._spatialdata_categorical_columns = []
+        self._loaded_spatialdata_path = None
+        self._spatialdata_scale_factor = 1  # Reset scale factor
+        self.im_xml = None
 
     def add_channel(self) -> None:
         # Check if we're already in SPATIALDATA mode
@@ -668,13 +1125,13 @@ class MainWindow(QMainWindow):
                 self.add_channel_control(
                     channel_name, len(self.image_viewer.channels) - 1
                 )
-                
+
                 self.img_stack.setCurrentWidget(self.image_viewer)
 
                 # Set IMAGE workflow mode on first channel load
                 if self.state.data_load_mode == DataLoadMode.NONE:
                     self.set_image_workflow_mode()
-                
+
                 self.state.enable_advanced_home()
                 # Disable calibration buttons until shapes are loaded
                 self.page1.load_calibration_btn.setEnabled(False)
@@ -713,6 +1170,23 @@ class MainWindow(QMainWindow):
         if not zarr_path:
             return
 
+        # Check if spatialdata has already been loaded
+        if self._loaded_spatialdata_path is not None:
+            reply = QMessageBox.warning(
+                self,
+                "SpatialData Already Loaded",
+                "A SpatialData file has already been loaded.\n\n"
+                "Loading a new file will replace all existing data "
+                "(channels, shapes, landmarks, and annotations).\n\n"
+                "Do you want to proceed?",
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            # Clear existing spatialdata state before loading new data
+            self._clear_spatialdata_state()
+
         try:
             # Load SpatialData
             progress = QProgressDialog("Loading SpatialData...", "Cancel", 0, 100, self)
@@ -740,13 +1214,51 @@ class MainWindow(QMainWindow):
                 progress.close()
                 return
 
+            # Initialize scale factor (will be updated when loading images)
+            self._spatialdata_scale_factor = 1
+
             # Load images
             if available_images:
+                # Check for multiple resolution levels
+                scale_levels = loader.get_available_scale_levels()
+                selected_scale_level = 0
+                level_info = (
+                    loader.get_scale_level_info()
+                )  # Always get level info for scale factor
+
+                if len(scale_levels) > 1:
+                    # Close progress dialog before showing resolution selection
+                    progress.close()
+
+                    # Show resolution selection dialog
+                    dialog = ResolutionSelectionDialog(level_info, self)
+                    if dialog.exec() != QDialog.Accepted:
+                        # User cancelled
+                        return
+                    selected_scale_level = dialog.get_selected_level()
+
+                    # Create new progress dialog
+                    progress = QProgressDialog(
+                        "Loading SpatialData...", "Cancel", 0, 100, self
+                    )
+                    progress.setWindowModality(Qt.ApplicationModal)
+
                 progress.setLabelText("Extracting image channels...")
                 progress.setValue(30)
                 QApplication.processEvents()
 
-                channels, channel_names = loader.extract_image_channels()
+                channels, channel_names = loader.extract_image_channels(
+                    scale_level=selected_scale_level
+                )
+
+                # Get actual pyramid scale factor from level info
+                # This is more accurate than assuming 2^level
+                if level_info and selected_scale_level < len(level_info):
+                    pyramid_scale = level_info[selected_scale_level].get(
+                        "scale_factor_num", 2**selected_scale_level
+                    )
+                else:
+                    pyramid_scale = 2**selected_scale_level
 
                 # Downsample if needed
                 inv_scale = 1  # Track downsampling factor for coordinates
@@ -764,6 +1276,11 @@ class MainWindow(QMainWindow):
                             downsampled_channels.append(downsampled)
                         channels = downsampled_channels
 
+                # Store total scale factor for coordinate rescaling
+                # This combines pyramid level scaling and any additional downsampling
+                self._spatialdata_scale_factor = pyramid_scale * inv_scale
+
+                if channels:
                     progress.setValue(50)
                     QApplication.processEvents()
 
@@ -818,13 +1335,26 @@ class MainWindow(QMainWindow):
 
                 if polygons:
                     self.state.reset_shapes()
+                    scale_factor = self._spatialdata_scale_factor
                     for item in polygons:
                         if len(item) == 3:
                             points, label, original_id = item
+                            # Scale points to match loaded image resolution
+                            if scale_factor > 1:
+                                points = [
+                                    QPointF(p.x() / scale_factor, p.y() / scale_factor)
+                                    for p in points
+                                ]
                             polygon = Polygon(points, label, original_id=original_id)
                         else:
                             # Fallback for old format
                             points, label = item
+                            # Scale points to match loaded image resolution
+                            if scale_factor > 1:
+                                points = [
+                                    QPointF(p.x() / scale_factor, p.y() / scale_factor)
+                                    for p in points
+                                ]
                             polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
@@ -841,7 +1371,14 @@ class MainWindow(QMainWindow):
 
                 if polygons:
                     self.state.reset_shapes()
+                    scale_factor = self._spatialdata_scale_factor
                     for points, label in polygons:
+                        # Scale points to match loaded image resolution
+                        if scale_factor > 1:
+                            points = [
+                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
+                                for p in points
+                            ]
                         polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
@@ -860,9 +1397,22 @@ class MainWindow(QMainWindow):
                 progress.setValue(90)
                 QApplication.processEvents()
 
+                # Get scale factor for coordinate scaling
+                scale_factor = self._spatialdata_scale_factor
+
                 # Load landmarks first (they don't affect other selections)
                 landmarks = loader.load_cellpick_landmarks()
                 if landmarks:
+                    # Scale landmark coordinates to match loaded image resolution
+                    if scale_factor > 1:
+                        scaled_landmarks = []
+                        for lm_points in landmarks:
+                            scaled_lm = [
+                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
+                                for p in lm_points
+                            ]
+                            scaled_landmarks.append(scaled_lm)
+                        landmarks = scaled_landmarks
                     self.state.landmarks = landmarks
                     # Add landmarks to visual display
                     for landmark_points in landmarks:
@@ -876,6 +1426,16 @@ class MainWindow(QMainWindow):
                 # Load active regions (they determine which cells are active)
                 active_regions = loader.load_cellpick_active_regions()
                 if active_regions:
+                    # Scale active region coordinates to match loaded image resolution
+                    if scale_factor > 1:
+                        scaled_ars = []
+                        for ar_points in active_regions:
+                            scaled_ar = [
+                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
+                                for p in ar_points
+                            ]
+                            scaled_ars.append(scaled_ar)
+                        active_regions = scaled_ars
                     self.state.active_regions = active_regions
                     # Add active regions to visual display
                     for ar_points in active_regions:
@@ -940,7 +1500,7 @@ class MainWindow(QMainWindow):
             # Set SPATIALDATA workflow mode
             if self.state.data_load_mode == DataLoadMode.NONE:
                 self.set_spatialdata_workflow_mode()
-            
+
             self.state.enable_advanced_home()
 
             # Build success message
@@ -1129,7 +1689,7 @@ class MainWindow(QMainWindow):
         )
 
     def load_calibration(self) -> None:
-        assert(self.state.data_load_mode == DataLoadMode.IMAGE)
+        assert self.state.data_load_mode == DataLoadMode.IMAGE
         self.state.calibration_points = []
         self.state.image_viewer.remove_calibration_items()
         if not self.image_viewer.channels:
@@ -1144,7 +1704,7 @@ class MainWindow(QMainWindow):
         self.meta_path = meta_path
 
     def manual_calibration(self) -> None:
-        assert(self.state.data_load_mode == DataLoadMode.IMAGE)
+        assert self.state.data_load_mode == DataLoadMode.IMAGE
         self.meta_path = None
         if self.state.state == AppState.ADV_HOME:
             self.state.start_calibration_selection()
@@ -1359,7 +1919,7 @@ class MainWindow(QMainWindow):
                 "Success",
                 f"Loaded labels for {len(labels_dict)} cells.",
             )
-        
+
         if delete_labels:
             self.state.clear_cell_labels()
             self.page2.update_label_checkboxes(self.state.label_colors)
@@ -1370,17 +1930,18 @@ class MainWindow(QMainWindow):
             button.setEnabled(False)
         self.page1.add_channel_btn.setEnabled(True)
         self.page1.add_spatialdata_btn.setEnabled(True)
+        self._sync_menu_actions()
 
     def enable_adv_home_buttons(self) -> None:
         assert self.state.state == AppState.ADV_HOME
         for button in self.page1.buttons:
             button.setEnabled(True)
-        
+
         if self.state.data_load_mode == DataLoadMode.IMAGE:
             # Disable SpatialData button
             self.page1.add_spatialdata_btn.setEnabled(False)
         else:
-            assert(self.state.data_load_mode == DataLoadMode.SPATIALDATA)
+            assert self.state.data_load_mode == DataLoadMode.SPATIALDATA
             # Disable all IMAGE workflow buttons
             self.page1.add_channel_btn.setEnabled(False)
             self.page1.select_shape_color_btn.setEnabled(True)
@@ -1389,6 +1950,7 @@ class MainWindow(QMainWindow):
             self.page1.confirm_calibration_btn.setEnabled(False)
             self.page1.load_shapes_btn.setEnabled(False)
 
+            self._sync_menu_actions()
 
     def reset_main_buttons(self) -> None:
         assert self.state.state == AppState.MAIN
@@ -1416,9 +1978,10 @@ class MainWindow(QMainWindow):
         self.page2.add_shapes_btn.setEnabled(True)
         self.page2.rem_shapes_btn.setEnabled(True)
         self.page2.back_btn.setEnabled(True)
-
         self.page2.clustering_type.setEnabled(True)
         self.page2.k_box.setEnabled(True)
+
+        self._sync_menu_actions()
 
     def toggle_landmark_selection(self) -> None:
         if self.state.state == AppState.MAIN:
@@ -1668,18 +2231,63 @@ class MainWindow(QMainWindow):
                 progress.setValue(percent)
                 QApplication.processEvents()
 
+            # Get scale factor for rescaling coordinates to full resolution
+            scale_factor = getattr(self, "_spatialdata_scale_factor", 1)
+
+            # Helper function to rescale polygon points to full resolution
+            def rescale_polygon(poly):
+                """Create a new polygon with coordinates scaled to full resolution."""
+                if scale_factor <= 1:
+                    return poly
+                scaled_points = [
+                    QPointF(p.x() * scale_factor, p.y() * scale_factor)
+                    for p in poly.points
+                ]
+                new_poly = Polygon(
+                    scaled_points, poly.label, original_id=poly.original_id
+                )
+                new_poly.score = poly.score
+                new_poly.color = poly.color
+                return new_poly
+
+            # Helper function to rescale a list of points
+            def rescale_points(points_list):
+                """Rescale a list of QPointF to full resolution."""
+                if scale_factor <= 1 or points_list is None:
+                    return points_list
+                return [
+                    [QPointF(p.x() * scale_factor, p.y() * scale_factor) for p in pts]
+                    for pts in points_list
+                ]
+
+            # Rescale data for export
+            export_selected_polygons = (
+                [rescale_polygon(p) for p in selected_polygons]
+                if selected_polygons
+                else []
+            )
+            export_landmarks = (
+                rescale_points(self.state.landmarks) if has_landmarks else None
+            )
+            export_active_regions = (
+                rescale_points(self.state.active_regions) if has_ar else None
+            )
+            export_all_polygons = (
+                [rescale_polygon(p) for p in all_polygons] if all_polygons else None
+            )
+
             # Export to SpatialData
             SpatialDataExporter.export_to_spatialdata(
                 input_path=input_path,
                 output_path=output_path,
-                selected_polygons=selected_polygons,
-                landmarks=self.state.landmarks if has_landmarks else None,
-                active_regions=self.state.active_regions if has_ar else None,
+                selected_polygons=export_selected_polygons,
+                landmarks=export_landmarks,
+                active_regions=export_active_regions,
                 image_shape=image_shape,
                 coordinate_system="global",
                 progress_callback=update_export_progress,
                 image_channels=image_channels,
-                all_polygons=all_polygons,
+                all_polygons=export_all_polygons,
             )
 
             progress.setValue(100)
@@ -1731,9 +2339,16 @@ class MainWindow(QMainWindow):
                 self, "Error", "No ImXML instance loaded. Please load shapes first."
             )
             return
+
+        # Calculate export scale: need to account for both display scale and spatialdata scale
+        # For SpatialData: coordinates were divided by _spatialdata_scale_factor during loading
+        # For XML export: we need to divide by (self.scale / spatialdata_scale) to get full resolution
+        spatialdata_scale = getattr(self, "_spatialdata_scale_factor", 1)
+        export_scale = self.scale / spatialdata_scale
+
         # Export XML
         xml_path = base_path + ".xml"
-        export_xml(xml_path, selected_indices, self.im_xml)
+        export_xml(xml_path, selected_indices, self.im_xml, export_scale)
         # Export CSV
         csv_path = base_path + ".csv"
         # Get scores from state.shapes
@@ -1745,12 +2360,12 @@ class MainWindow(QMainWindow):
         df = pd.DataFrame(data)
         df.to_csv(csv_path, index=False)
 
-        # Export Landmarks XML
+        # Export Landmarks XML (uses same export_scale)
         landmarks_path = base_path + "_landmarks.xml"
-        export_landmarks_xml(landmarks_path, self.state.landmarks, self.scale)
+        export_landmarks_xml(landmarks_path, self.state.landmarks, export_scale)
         # Export AR XML
         ar_path = base_path + "_AR.xml"
-        export_ar_xml(ar_path, self.state.active_regions, self.scale)
+        export_ar_xml(ar_path, self.state.active_regions, export_scale)
 
         QMessageBox.information(
             self, "Export Complete", f"Exported to:\n{xml_path}\n{csv_path}"
@@ -1826,4 +2441,3 @@ class MainWindow(QMainWindow):
             self.reset_main_buttons()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load ARs: {e}")
-

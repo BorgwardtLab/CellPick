@@ -38,6 +38,7 @@ ALPHA_ENABLED2 = 160
 ALPHA_DISABLED1 = 100
 ALPHA_DISABLED2 = 50
 
+
 class ZoomableGraphicsView(QGraphicsView):
     scene: QGraphicsScene
     pixmap_item: Optional[QGraphicsPixmapItem]
@@ -119,6 +120,18 @@ class ImageViewer(QWidget):
         layout.addWidget(self.graphics_view)
         self.setMouseTracking(True)
 
+    def get_pen_scale(self) -> float:
+        """Get the pen width scale factor based on spatialdata resolution level."""
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, "_spatialdata_scale_factor"):
+            main_window = main_window.parent()
+
+        if main_window and hasattr(main_window, "_spatialdata_scale_factor"):
+            scale_factor = main_window._spatialdata_scale_factor
+            # Using a gentler exponent (0.3) to keep outlines visible at high downsampling
+            return max(0.25, min(1.0, 1.0 / (scale_factor**0.3)))
+        return 1.0
+
     def add_channel(
         self,
         image_data: np.ndarray,
@@ -179,6 +192,16 @@ class ImageViewer(QWidget):
             shape_outline_color = main_window.shape_outline_color
         else:
             shape_outline_color = QColor(0, 255, 0)
+
+        # Get scale factor for pen width adjustment
+        # At high downsampling levels, shapes are smaller so pen should be thinner
+        scale_factor = 1
+        if main_window and hasattr(main_window, "_spatialdata_scale_factor"):
+            scale_factor = main_window._spatialdata_scale_factor
+
+        # Calculate pen width scale (inverse of scale factor, with min/max bounds)
+        # Using a gentler exponent (0.3) to keep outlines visible at high downsampling
+        pen_scale = max(0.25, min(1.0, 1.0 / (scale_factor**0.3)))
 
         has_selected_shapes = len(self.state.selected_shape_ids) > 0
 
@@ -241,7 +264,7 @@ class ImageViewer(QWidget):
                 fill_color.setRed(min(255, fill_color.red() + 50))
                 fill_color.setGreen(min(255, fill_color.green() + 50))
                 fill_color.setBlue(min(255, fill_color.blue() + 50))
-                pen_width = 4
+                base_pen_width = 4
             else:
                 if has_selected_shapes:
                     color.setAlpha(ALPHA_DISABLED1)
@@ -253,7 +276,7 @@ class ImageViewer(QWidget):
                     fill_color.setRed(max(0, int(fill_color.red() * 0.7)))
                     fill_color.setGreen(max(0, int(fill_color.green() * 0.7)))
                     fill_color.setBlue(max(0, int(fill_color.blue() * 0.7)))
-                    pen_width = 1
+                    base_pen_width = 1
                 else:
                     color.setAlpha(ALPHA_BASE1)
                     color.setRed(min(255, color.red() + 50))
@@ -264,7 +287,11 @@ class ImageViewer(QWidget):
                     fill_color.setRed(min(255, fill_color.red() + 50))
                     fill_color.setGreen(min(255, fill_color.green() + 50))
                     fill_color.setBlue(min(255, fill_color.blue() + 50))
-                    pen_width = 2
+
+                    base_pen_width = 2
+
+            # Scale pen width based on resolution level
+            pen_width = max(0.5, base_pen_width * pen_scale)
 
             poly_item = QGraphicsPolygonItem(QPolygonF(polygon.points))
             poly_item.setPen(QPen(color, pen_width))
@@ -297,19 +324,26 @@ class ImageViewer(QWidget):
         if self.lnd_preview_item:
             self.graphics_view.scene.removeItem(self.lnd_preview_item)
 
-        self.lnd_preview_item = PolygonPreviewItem(points, color=Qt.white, pen_w=2)
+        pen_scale = self.get_pen_scale()
+        scaled_pen_w = max(0.5, 2 * pen_scale)
+        scaled_dot_size = max(1.5, 5 * pen_scale)
+        self.lnd_preview_item = PolygonPreviewItem(
+            points, color=Qt.white, pen_w=scaled_pen_w, dot_size=scaled_dot_size
+        )
         self.graphics_view.scene.addItem(self.lnd_preview_item)
 
         self.update()
 
     def add_persistent_lnd(self, points: List[QPointF]) -> None:
         # Add persistent polygon to scene
+        pen_scale = self.get_pen_scale()
+        scaled_pen_w = max(0.5, 2 * pen_scale)
         poly_item = QGraphicsPolygonItem(QPolygonF(points))
         if len(self.landmark_items) == 0:
-            poly_item.setPen(QPen(Qt.red, 2))
+            poly_item.setPen(QPen(Qt.red, scaled_pen_w))
             poly_item.setBrush(QColor(255, 20, 20, 60))
         else:
-            poly_item.setPen(QPen(Qt.green, 2))
+            poly_item.setPen(QPen(Qt.green, scaled_pen_w))
             poly_item.setBrush(QColor(20, 255, 20, 60))
         poly_item.setZValue(
             4
@@ -326,7 +360,9 @@ class ImageViewer(QWidget):
             # delete also the other landmark
             poly_item = self.landmark_items.pop(0)
             self.graphics_view.scene.removeItem(poly_item)
-            poly_item.setPen(QPen(Qt.red, 2))
+            pen_scale = self.get_pen_scale()
+            scaled_pen_w = max(0.5, 2 * pen_scale)
+            poly_item.setPen(QPen(Qt.red, scaled_pen_w))
             poly_item.setBrush(QColor(255, 20, 20, 60))
             poly_item.setZValue(2)
             # and add it back, but in red
@@ -340,15 +376,22 @@ class ImageViewer(QWidget):
         if self.ar_preview_item:
             self.graphics_view.scene.removeItem(self.ar_preview_item)
 
-        self.ar_preview_item = PolygonPreviewItem(points, color=Qt.yellow, pen_w=2)
+        pen_scale = self.get_pen_scale()
+        scaled_pen_w = max(0.5, 2 * pen_scale)
+        scaled_dot_size = max(1.5, 5 * pen_scale)
+        self.ar_preview_item = PolygonPreviewItem(
+            points, color=Qt.yellow, pen_w=scaled_pen_w, dot_size=scaled_dot_size
+        )
         self.graphics_view.scene.addItem(self.ar_preview_item)
 
         self.update()
 
     def add_persistent_ar(self, points: List[QPointF]) -> None:
         # Add persistent polygon to scene
+        pen_scale = self.get_pen_scale()
+        scaled_pen_w = max(0.75, 3 * pen_scale)
         poly_item = QGraphicsPolygonItem(QPolygonF(points))
-        poly_item.setPen(QPen(Qt.yellow, 3))
+        poly_item.setPen(QPen(Qt.yellow, scaled_pen_w))
         poly_item.setBrush(QColor(255, 255, 0, 20))
         poly_item.setZValue(1)
         self.graphics_view.scene.addItem(poly_item)

@@ -125,6 +125,166 @@ class SpatialDataLoader:
             return list(self.sdata.tables.keys())
         return []
 
+    def get_available_scale_levels(self, image_name: Optional[str] = None) -> List[str]:
+        """
+        Get list of available scale levels for a multiscale image.
+
+        Parameters
+        ----------
+        image_name : Optional[str]
+            Name of the image element. If None, uses the first available.
+
+        Returns
+        -------
+        List[str]
+            Names of available scale levels (e.g., ['scale0', 'scale1', 'scale2']).
+            Returns ['scale0'] for single-scale images.
+        """
+        if not self.get_available_images():
+            return []
+
+        if image_name is None:
+            image_name = self.get_available_images()[0]
+
+        image = self.sdata.images[image_name]
+
+        # Check if it's a multiscale image (DataTree)
+        try:
+            from xarray import DataTree
+
+            if isinstance(image, DataTree):
+                # Sort scale levels numerically (scale0, scale1, scale2, ...)
+                children = list(image.children.keys())
+                children.sort(
+                    key=lambda x: (
+                        int(x.replace("scale", ""))
+                        if x.startswith("scale") and x[5:].isdigit()
+                        else float("inf")
+                    )
+                )
+                return children
+        except ImportError:
+            pass
+
+        # Check using hasattr for older xarray versions
+        if hasattr(image, "children") and hasattr(image.children, "keys"):
+            children = list(image.children.keys())
+            if children:
+                # Sort scale levels numerically
+                children.sort(
+                    key=lambda x: (
+                        int(x.replace("scale", ""))
+                        if x.startswith("scale") and x[5:].isdigit()
+                        else float("inf")
+                    )
+                )
+                return children
+
+        # Single-scale image
+        return ["scale0"]
+
+    def get_scale_level_info(
+        self, image_name: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get information about each scale level including dimensions.
+
+        Parameters
+        ----------
+        image_name : Optional[str]
+            Name of the image element. If None, uses the first available.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            List of dicts with keys: 'level' (int), 'name' (str), 'height' (int),
+            'width' (int), 'channels' (int), 'scale_factor' (str).
+        """
+        if not self.get_available_images():
+            return []
+
+        if image_name is None:
+            image_name = self.get_available_images()[0]
+
+        image = self.sdata.images[image_name]
+        scale_levels = self.get_available_scale_levels(image_name)
+        level_info = []
+
+        # First, get dimensions of level 0 for computing actual scale factors
+        full_res_height = 0
+        full_res_width = 0
+
+        for i, level_name in enumerate(scale_levels):
+            try:
+                # Get the data for this level
+                if hasattr(image, "children") and image.children:
+                    level_data = sd.get_pyramid_levels(image, n=i)
+                else:
+                    level_data = image
+
+                # Extract dimensions
+                if hasattr(level_data, "sizes"):
+                    sizes = dict(level_data.sizes)
+                    height = sizes.get("y", sizes.get("Y", 0))
+                    width = sizes.get("x", sizes.get("X", 0))
+                    channels = sizes.get("c", sizes.get("C", 1))
+                elif hasattr(level_data, "shape"):
+                    shape = level_data.shape
+                    # Assume (c, y, x) or (y, x) ordering
+                    if len(shape) == 3:
+                        channels, height, width = shape
+                    elif len(shape) == 2:
+                        height, width = shape
+                        channels = 1
+                    else:
+                        height, width, channels = 0, 0, 0
+                else:
+                    height, width, channels = 0, 0, 0
+
+                # Store full resolution dimensions
+                if i == 0:
+                    full_res_height = height
+                    full_res_width = width
+
+                # Calculate actual scale factor from dimensions
+                if i == 0:
+                    scale_factor_num = 1
+                    scale_factor = "1x (full resolution)"
+                elif height > 0 and full_res_height > 0:
+                    # Calculate based on actual dimension ratio
+                    scale_factor_num = round(full_res_height / height)
+                    scale_factor = f"~{scale_factor_num}x downsampled"
+                else:
+                    scale_factor_num = 2**i
+                    scale_factor = f"~{scale_factor_num}x downsampled"
+
+                level_info.append(
+                    {
+                        "level": i,
+                        "name": level_name,
+                        "height": int(height),
+                        "width": int(width),
+                        "channels": int(channels),
+                        "scale_factor": scale_factor,
+                        "scale_factor_num": scale_factor_num,  # Add numeric scale factor
+                    }
+                )
+            except Exception as e:
+                # If we can't get info for this level, add placeholder
+                level_info.append(
+                    {
+                        "level": i,
+                        "name": level_name,
+                        "height": 0,
+                        "width": 0,
+                        "channels": 0,
+                        "scale_factor": f"Level {i}",
+                        "scale_factor_num": 2**i,
+                    }
+                )
+
+        return level_info
+
     def get_categorical_columns(self, table_name: Optional[str] = None) -> List[str]:
         """
         Get categorical columns from a table in the SpatialData object.

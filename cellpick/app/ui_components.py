@@ -82,19 +82,22 @@ class AnimatedButton(QPushButton):
 class PolygonPreviewItem(QGraphicsItem):
     points: List[QPointF]
     color: Any
-    pen_w: int
+    pen_w: float
+    dot_size: float
 
     def __init__(
         self,
         points: Optional[List[QPointF]],
         color: Any = Qt.green,
-        pen_w: int = 2,
+        pen_w: float = 2,
+        dot_size: float = 5,
         parent: Optional[QGraphicsItem] = None,
     ) -> None:
         super().__init__(parent)
         self.points = deepcopy(points) if points else []
         self.color = color
         self.pen_w = pen_w
+        self.dot_size = dot_size
         self.setZValue(1)
 
     def boundingRect(self) -> QRectF:
@@ -104,7 +107,13 @@ class PolygonPreviewItem(QGraphicsItem):
         ys = [p.y() for p in self.points]
         min_x, max_x = min(xs), max(xs)
         min_y, max_y = min(ys), max(ys)
-        return QRectF(min_x - 6, min_y - 6, (max_x - min_x) + 12, (max_y - min_y) + 12)
+        margin = max(6, self.dot_size + 2)
+        return QRectF(
+            min_x - margin,
+            min_y - margin,
+            (max_x - min_x) + 2 * margin,
+            (max_y - min_y) + 2 * margin,
+        )
 
     def paint(self, painter: QPainter, option: Any, widget: Optional[QWidget]) -> None:
         if not self.points:
@@ -118,7 +127,7 @@ class PolygonPreviewItem(QGraphicsItem):
             painter.drawPolyline(QPolygonF(self.points))
         painter.setBrush(self.color)
         for pt in self.points:
-            painter.drawEllipse(pt, 5, 5)
+            painter.drawEllipse(pt, self.dot_size, self.dot_size)
 
 
 class ProgressDialog(QDialog):
@@ -384,5 +393,5 @@ class LoadLabelsDialog(QDialog):
             self.selected_source = "spatialdata"
         elif self.delete_radio.isChecked():
             self.selected_source = "delete"
-        
+
         super().accept()
