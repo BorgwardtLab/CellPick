@@ -575,6 +575,60 @@ class MainWindow(QMainWindow):
         self.page1.manual_calibration_btn.setEnabled(False)
         self.page1.confirm_calibration_btn.setEnabled(False)
 
+    def _clear_spatialdata_state(self) -> None:
+        """
+        Clear all state related to a previously loaded SpatialData file.
+        This allows loading a new SpatialData file without stacking data.
+        """
+        # Clear image viewer channels
+        self.image_viewer.channels = []
+        self.image_viewer.composite_image = None
+        self.image_viewer.height = None
+        self.image_viewer.width = None
+        self.channels = []
+
+        # Clear channel control panel widgets
+        while self.channel_control.count():
+            item = self.channel_control.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+
+        # Clear shapes and selections
+        self.state.reset_shapes()
+
+        # Clear landmarks
+        for item in self.image_viewer.landmark_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.landmark_items = []
+        self.state.landmarks = []
+        self.state.current_lnd_points = []
+
+        # Clear active regions
+        for item in self.image_viewer.ar_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.ar_items = []
+        self.state.active_regions = []
+        self.state.current_ar_points = []
+
+        # Clear shape display items
+        for item in self.image_viewer.shape_items:
+            self.image_viewer.graphics_view.scene.removeItem(item)
+        self.image_viewer.shape_items = []
+
+        # Clear label-related state
+        self.state.cell_labels = None
+        self.state.label_colors = None
+
+        # Reset scale
+        self.scale = 1.0
+
+        # Clear spatialdata-specific attributes
+        self._spatialdata_loader = None
+        self._spatialdata_categorical_columns = []
+        self._loaded_spatialdata_path = None
+        self.im_xml = None
+
     def add_channel(self) -> None:
         # Check if we're already in SPATIALDATA mode
         if self.state.data_load_mode == DataLoadMode.SPATIALDATA:
@@ -707,6 +761,23 @@ class MainWindow(QMainWindow):
 
         if not zarr_path:
             return
+
+        # Check if spatialdata has already been loaded
+        if self._loaded_spatialdata_path is not None:
+            reply = QMessageBox.warning(
+                self,
+                "SpatialData Already Loaded",
+                "A SpatialData file has already been loaded.\n\n"
+                "Loading a new file will replace all existing data "
+                "(channels, shapes, landmarks, and annotations).\n\n"
+                "Do you want to proceed?",
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Cancel,
+            )
+            if reply != QMessageBox.Yes:
+                return
+            # Clear existing spatialdata state before loading new data
+            self._clear_spatialdata_state()
 
         try:
             # Load SpatialData
