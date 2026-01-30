@@ -311,7 +311,7 @@ class ActionPage(QWidget):
     load_lnd_btn: AnimatedButton
     load_ar_btn: AnimatedButton
     clustering_type: QComboBox
-    #label_checkboxes_container: QWidget
+    # label_checkboxes_container: QWidget
     label_checkboxes: dict
     buttons: List[Any]
 
@@ -346,7 +346,7 @@ class ActionPage(QWidget):
         )
         self.label_checkboxes = {}
         # Container for label checkboxes (initially hidden)
-        #self.label_checkboxes_container = QWidget()
+        # self.label_checkboxes_container = QWidget()
         # self.label_checkboxes_layout = QVBoxLayout(self.label_checkboxes_container)
         # self.label_checkboxes_layout.setContentsMargins(0, 0, 0, 0)
         self.label_checkboxes_container = ScrollableContainer(height=60)
@@ -434,7 +434,7 @@ class ActionPage(QWidget):
 
         if labels is None:
             # Remove "Select k per label" option to clustering type if present
-            if self.clustering_type.count() == 4: 
+            if self.clustering_type.count() == 4:
                 self.clustering_type.removeItem(3)
             return
 
@@ -913,14 +913,13 @@ class MainWindow(QMainWindow):
         This is irreversible without restarting the app.
         """
         self.state.data_load_mode = DataLoadMode.SPATIALDATA
-        
+
         # Disable all IMAGE workflow buttons
         self.page1.add_channel_btn.setEnabled(False)
         self.page1.select_shape_color_btn.setEnabled(False)
         self.page1.load_calibration_btn.setEnabled(False)
         self.page1.manual_calibration_btn.setEnabled(False)
         self.page1.confirm_calibration_btn.setEnabled(False)
-        
 
     def _clear_spatialdata_state(self) -> None:
         """
@@ -1126,13 +1125,13 @@ class MainWindow(QMainWindow):
                 self.add_channel_control(
                     channel_name, len(self.image_viewer.channels) - 1
                 )
-                
+
                 self.img_stack.setCurrentWidget(self.image_viewer)
 
                 # Set IMAGE workflow mode on first channel load
                 if self.state.data_load_mode == DataLoadMode.NONE:
                     self.set_image_workflow_mode()
-                
+
                 self.state.enable_advanced_home()
                 # Disable calibration buttons until shapes are loaded
                 self.page1.load_calibration_btn.setEnabled(False)
@@ -1501,7 +1500,7 @@ class MainWindow(QMainWindow):
             # Set SPATIALDATA workflow mode
             if self.state.data_load_mode == DataLoadMode.NONE:
                 self.set_spatialdata_workflow_mode()
-            
+
             self.state.enable_advanced_home()
 
             # Build success message
@@ -1690,7 +1689,7 @@ class MainWindow(QMainWindow):
         )
 
     def load_calibration(self) -> None:
-        assert(self.state.data_load_mode == DataLoadMode.IMAGE)
+        assert self.state.data_load_mode == DataLoadMode.IMAGE
         self.state.calibration_points = []
         self.state.image_viewer.remove_calibration_items()
         if not self.image_viewer.channels:
@@ -1705,7 +1704,7 @@ class MainWindow(QMainWindow):
         self.meta_path = meta_path
 
     def manual_calibration(self) -> None:
-        assert(self.state.data_load_mode == DataLoadMode.IMAGE)
+        assert self.state.data_load_mode == DataLoadMode.IMAGE
         self.meta_path = None
         if self.state.state == AppState.ADV_HOME:
             self.state.start_calibration_selection()
@@ -1920,7 +1919,7 @@ class MainWindow(QMainWindow):
                 "Success",
                 f"Loaded labels for {len(labels_dict)} cells.",
             )
-        
+
         if delete_labels:
             self.state.clear_cell_labels()
             self.page2.update_label_checkboxes(self.state.label_colors)
@@ -1937,12 +1936,12 @@ class MainWindow(QMainWindow):
         assert self.state.state == AppState.ADV_HOME
         for button in self.page1.buttons:
             button.setEnabled(True)
-        
+
         if self.state.data_load_mode == DataLoadMode.IMAGE:
             # Disable SpatialData button
             self.page1.add_spatialdata_btn.setEnabled(False)
         else:
-            assert(self.state.data_load_mode == DataLoadMode.SPATIALDATA)
+            assert self.state.data_load_mode == DataLoadMode.SPATIALDATA
             # Disable all IMAGE workflow buttons
             self.page1.add_channel_btn.setEnabled(False)
             self.page1.select_shape_color_btn.setEnabled(True)
@@ -2442,4 +2441,3 @@ class MainWindow(QMainWindow):
             self.reset_main_buttons()
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load ARs: {e}")
-

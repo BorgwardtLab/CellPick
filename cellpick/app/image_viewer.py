@@ -38,6 +38,7 @@ ALPHA_ENABLED2 = 160
 ALPHA_DISABLED1 = 100
 ALPHA_DISABLED2 = 50
 
+
 class ZoomableGraphicsView(QGraphicsView):
     scene: QGraphicsScene
     pixmap_item: Optional[QGraphicsPixmapItem]
@@ -286,7 +287,7 @@ class ImageViewer(QWidget):
                     fill_color.setRed(min(255, fill_color.red() + 50))
                     fill_color.setGreen(min(255, fill_color.green() + 50))
                     fill_color.setBlue(min(255, fill_color.blue() + 50))
-                    
+
                     base_pen_width = 2
 
             # Scale pen width based on resolution level

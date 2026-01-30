@@ -393,5 +393,5 @@ class LoadLabelsDialog(QDialog):
             self.selected_source = "spatialdata"
         elif self.delete_radio.isChecked():
             self.selected_source = "delete"
-        
+
         super().accept()

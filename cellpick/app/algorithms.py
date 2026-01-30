@@ -89,11 +89,12 @@ def polygon_mindist(polys: List[List[Tuple[float, float]]]) -> float:
     """
     mindist = 1e10
     for i in range(len(polys)):
-        for j in range(i+1, len(polys)):
-            mindist = min( mindist, approx_shape_distance(polys[i], polys[j]) )
+        for j in range(i + 1, len(polys)):
+            mindist = min(mindist, approx_shape_distance(polys[i], polys[j]))
             if mindist < 1e-6:
                 break
     return mindist
+
 
 def polygon_gonzalez(polys: List[List[Tuple[float, float]]], k: int) -> List[int]:
     """
