@@ -206,17 +206,20 @@ class ImageViewer(QWidget):
         has_selected_shapes = len(self.state.selected_shape_ids) > 0
 
         # Check if labels are loaded
-        use_label_colors = (
+        labels_available = (
             self.state.cell_labels is not None and self.state.label_colors is not None
         )
 
-        # if use_label_colors:
-        #     print(
-        #         f"[Polygon Display] Using label colors: {len(self.state.cell_labels)} labels, {len(self.state.label_colors)} colors"
-        #     )
+        # Check if user prefers gradient over labels
+        prefer_gradient = False
+        if main_window and hasattr(main_window, "_prefer_gradient_over_labels"):
+            prefer_gradient = main_window._prefer_gradient_over_labels
+
+        # Use labels only if available AND not preferring gradient
+        use_label_colors = labels_available and not prefer_gradient
 
         for idx, polygon in enumerate(self.state.shapes):
-            # Priority: 1) Label colors, 2) Score colors, 3) User-selected color
+            # Priority: 1) Label colors (if enabled), 2) Score colors, 3) User-selected color
             if use_label_colors and idx in self.state.cell_labels:
                 # Color by label using Tab10/Tab20 palette
                 label = self.state.cell_labels[idx]

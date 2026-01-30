@@ -743,6 +743,9 @@ class AppStateManager:
             shape.score = None
             shape.set_color()
         self.image_viewer.update_polygon_display()
+        # Update color mode toggle availability in main window
+        if self.main_window and hasattr(self.main_window, "_update_color_mode_action"):
+            self.main_window._update_color_mode_action()
 
     def start_calibration_selection(self) -> None:
         self.calibration_points = []

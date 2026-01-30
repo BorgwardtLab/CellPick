@@ -530,6 +530,7 @@ class MainWindow(QMainWindow):
         self._spatialdata_categorical_columns = []
         self._loaded_spatialdata_path = None
         self._spatialdata_scale_factor = 1  # Track scaling for multi-resolution images
+        self._prefer_gradient_over_labels = False  # Toggle for color mode display
         # Set window icon
         current_dir = Path(__file__).parent.parent
         logo_svg_path = current_dir / "assets" / "logo.svg"
@@ -650,6 +651,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        self.action_screenshot = QAction("Save Screenshot...", self)
+        self.action_screenshot.setShortcut("Ctrl+Shift+S")
+        self.action_screenshot.triggered.connect(self.save_screenshot)
+        file_menu.addAction(self.action_screenshot)
+
+        file_menu.addSeparator()
+
         action_exit = QAction("Exit", self)
         action_exit.triggered.connect(self.close)
         file_menu.addAction(action_exit)
@@ -663,6 +671,20 @@ class MainWindow(QMainWindow):
         self.action_reset_view = QAction("Reset View", self)
         self.action_reset_view.triggered.connect(self.reset_view)
         view_menu.addAction(self.action_reset_view)
+
+        view_menu.addSeparator()
+
+        self.action_toggle_color_mode = QAction(
+            "Show Gradient (instead of Labels)", self
+        )
+        self.action_toggle_color_mode.setCheckable(True)
+        self.action_toggle_color_mode.setChecked(False)
+        self.action_toggle_color_mode.setShortcut("Ctrl+Shift+Space")
+        self.action_toggle_color_mode.triggered.connect(self.toggle_color_mode)
+        self.action_toggle_color_mode.setEnabled(
+            False
+        )  # Disabled until both labels and landmarks are available
+        view_menu.addAction(self.action_toggle_color_mode)
 
         view_menu.addSeparator()
 
@@ -800,6 +822,112 @@ class MainWindow(QMainWindow):
         QMessageBox.about(
             self, "About CellPick", "CellPick\n\nA spatial omics cell selection tool."
         )
+
+    def save_screenshot(self) -> None:
+        """Save a full-resolution screenshot of the visualization to a PNG file."""
+        # Check if there's anything to capture
+        if not self.image_viewer.channels:
+            QMessageBox.warning(
+                self,
+                "No Image",
+                "No image loaded to capture.",
+            )
+            return
+
+        # Prompt for save location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Screenshot",
+            "cellpick_screenshot.png",
+            "PNG Images (*.png);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        # Ensure .png extension
+        if not file_path.lower().endswith(".png"):
+            file_path += ".png"
+
+        try:
+            # Get the graphics view and its visible area
+            graphics_view = self.image_viewer.graphics_view
+
+            # Get the visible scene rectangle (what's currently displayed)
+            visible_rect = graphics_view.mapToScene(
+                graphics_view.viewport().rect()
+            ).boundingRect()
+
+            # Get dimensions of the visible area
+            width = int(visible_rect.width())
+            height = int(visible_rect.height())
+
+            if width <= 0 or height <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Screenshot Error",
+                    "Invalid viewport dimensions.",
+                )
+                return
+
+            # Create image with transparent background, then fill white
+            from PySide6.QtGui import QImage, QPainter
+
+            image = QImage(width, height, QImage.Format_ARGB32)
+            image.fill(Qt.white)
+
+            # Render only the visible portion of the scene to the image
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            graphics_view.scene.render(painter, source=visible_rect)
+            painter.end()
+
+            # Save the image
+            if image.save(file_path):
+                QMessageBox.information(
+                    self,
+                    "Screenshot Saved",
+                    f"Screenshot saved to:\n{file_path}\n\nSize: {width} x {height} pixels",
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Screenshot Error",
+                    f"Failed to save screenshot to:\n{file_path}",
+                )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Screenshot Error",
+                f"Error saving screenshot:\n{str(e)}",
+            )
+
+    def toggle_color_mode(self) -> None:
+        """Toggle between showing labels and gradient colors for shapes."""
+        self._prefer_gradient_over_labels = self.action_toggle_color_mode.isChecked()
+        # Update the display to reflect the change
+        self.image_viewer.update_polygon_display()
+
+    def _update_color_mode_action(self) -> None:
+        """Update the color mode toggle action based on available data."""
+        # Check if both labels and landmarks (scores) are available
+        has_labels = (
+            self.state.cell_labels is not None
+            and self.state.label_colors is not None
+            and len(self.state.cell_labels) > 0
+        )
+        has_scores = len(self.state.landmarks) >= 2  # Scores require 2 landmarks
+
+        # Enable the toggle only if both are available
+        self.action_toggle_color_mode.setEnabled(has_labels and has_scores)
+
+        # Update the action text based on current state
+        if self._prefer_gradient_over_labels:
+            self.action_toggle_color_mode.setText("Show Labels (instead of Gradient)")
+        else:
+            self.action_toggle_color_mode.setText("Show Gradient (instead of Labels)")
 
     def _sync_menu_actions(self) -> None:
         """Sync menu action enabled states with corresponding buttons and current page."""
@@ -1512,6 +1640,9 @@ class MainWindow(QMainWindow):
                     annotations_loaded
                 )
 
+            # Update color mode toggle availability
+            self._update_color_mode_action()
+
             QMessageBox.information(self, "SpatialData Loaded", msg)
 
         except RuntimeError as e:
@@ -1914,6 +2045,7 @@ class MainWindow(QMainWindow):
             self.state.load_cell_labels(labels_dict)
             # Update label checkboxes in UI
             self.page2.update_label_checkboxes(self.state.label_colors)
+            self._update_color_mode_action()
             QMessageBox.information(
                 self,
                 "Success",
@@ -1923,6 +2055,7 @@ class MainWindow(QMainWindow):
         if delete_labels:
             self.state.clear_cell_labels()
             self.page2.update_label_checkboxes(self.state.label_colors)
+            self._update_color_mode_action()
 
     def reset_home_buttons(self) -> None:
         assert self.state.state == AppState.HOME
@@ -2008,6 +2141,7 @@ class MainWindow(QMainWindow):
     def confirm_landmark(self) -> None:
         self.state.confirm_landmark()
         self.page2.add_lnd_btn.setText("Add Landmark")
+        self._update_color_mode_action()
         self.reset_main_buttons()
 
     def delete_last_lnd_point(self) -> None:
@@ -2406,6 +2540,7 @@ class MainWindow(QMainWindow):
             if len(landmarks) == 2:
                 self.state.set_scores()
 
+            self._update_color_mode_action()
             self.reset_main_buttons()
 
         except Exception as e:
