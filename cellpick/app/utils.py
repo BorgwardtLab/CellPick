@@ -321,7 +321,7 @@ class ImXML:
         )
 
 
-def export_xml(path: str, indices: List[int], dvpxml) -> None:
+def export_xml(path: str, indices: List[int], dvpxml, scale: float = 1.0) -> None:
     """
     Select shapes with ID Shape_index in indices and export them to an XML file.
 
@@ -331,6 +331,12 @@ def export_xml(path: str, indices: List[int], dvpxml) -> None:
         Path to the output XML file.
     indices : List[int]
         List of shape indices to export.
+    dvpxml : DVPXML or MockDVPXML
+        The DVPXML object containing shape data.
+    scale : float, optional
+        Scale factor for coordinates. Coordinates are divided by this value.
+        Use this to rescale from display coordinates to full resolution.
+        Default is 1.0 (no scaling).
     """
     # Create root element
     root = etree.Element("ImageData")
@@ -363,9 +369,9 @@ def export_xml(path: str, indices: List[int], dvpxml) -> None:
         point_count_elem.text = str(len(x))
         for j in range(len(x)):
             x_elem = etree.SubElement(shape_elem, f"X_{j+1}")
-            x_elem.text = str(int(x[j]))
+            x_elem.text = str(int(x[j] / scale))
             y_elem = etree.SubElement(shape_elem, f"Y_{j+1}")
-            y_elem.text = str(int(y[j]))
+            y_elem.text = str(int(y[j] / scale))
     # Write XML
     tree = etree.ElementTree(root)
     tree.write(path, pretty_print=True, xml_declaration=True, encoding="utf-8")
