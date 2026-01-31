@@ -296,7 +296,8 @@ class ImageViewer(QWidget):
             # Scale pen width based on resolution level
             pen_width = max(0.5, base_pen_width * pen_scale)
 
-            poly_item = QGraphicsPolygonItem(QPolygonF(polygon.points))
+            # Use cached QPolygonF for efficient rendering
+            poly_item = QGraphicsPolygonItem(polygon.get_qpolygon())
             poly_item.setPen(QPen(color, pen_width))
             poly_item.setBrush(fill_color)
             poly_item.setZValue(3)

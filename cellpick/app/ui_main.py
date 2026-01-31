@@ -72,7 +72,14 @@ from PySide6.QtWidgets import (
 )
 from tifffile import imread as tifimread
 
-from .components import CHANNEL_COLORS, AppState, AppStateManager, DataLoadMode, Polygon
+from .components import (
+    CHANNEL_COLORS,
+    AppState,
+    AppStateManager,
+    DataLoadMode,
+    Polygon,
+    rescale_points_vectorized,
+)
 from .image_viewer import ImageViewer
 from .ui_components import (
     AnimatedButton,
@@ -1467,22 +1474,16 @@ class MainWindow(QMainWindow):
                     for item in polygons:
                         if len(item) == 3:
                             points, label, original_id = item
-                            # Scale points to match loaded image resolution
+                            # Scale points using vectorized operation
                             if scale_factor > 1:
-                                points = [
-                                    QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                    for p in points
-                                ]
+                                points = rescale_points_vectorized(points, scale_factor)
                             polygon = Polygon(points, label, original_id=original_id)
                         else:
                             # Fallback for old format
                             points, label = item
-                            # Scale points to match loaded image resolution
+                            # Scale points using vectorized operation
                             if scale_factor > 1:
-                                points = [
-                                    QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                    for p in points
-                                ]
+                                points = rescale_points_vectorized(points, scale_factor)
                             polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
@@ -1501,12 +1502,9 @@ class MainWindow(QMainWindow):
                     self.state.reset_shapes()
                     scale_factor = self._spatialdata_scale_factor
                     for points, label in polygons:
-                        # Scale points to match loaded image resolution
+                        # Scale points using vectorized operation
                         if scale_factor > 1:
-                            points = [
-                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                for p in points
-                            ]
+                            points = rescale_points_vectorized(points, scale_factor)
                         polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
@@ -1531,16 +1529,12 @@ class MainWindow(QMainWindow):
                 # Load landmarks first (they don't affect other selections)
                 landmarks = loader.load_cellpick_landmarks()
                 if landmarks:
-                    # Scale landmark coordinates to match loaded image resolution
+                    # Scale landmark coordinates using vectorized operation
                     if scale_factor > 1:
-                        scaled_landmarks = []
-                        for lm_points in landmarks:
-                            scaled_lm = [
-                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                for p in lm_points
-                            ]
-                            scaled_landmarks.append(scaled_lm)
-                        landmarks = scaled_landmarks
+                        landmarks = [
+                            rescale_points_vectorized(lm_points, scale_factor)
+                            for lm_points in landmarks
+                        ]
                     self.state.landmarks = landmarks
                     # Add landmarks to visual display
                     for landmark_points in landmarks:
@@ -1554,16 +1548,12 @@ class MainWindow(QMainWindow):
                 # Load active regions (they determine which cells are active)
                 active_regions = loader.load_cellpick_active_regions()
                 if active_regions:
-                    # Scale active region coordinates to match loaded image resolution
+                    # Scale active region coordinates using vectorized operation
                     if scale_factor > 1:
-                        scaled_ars = []
-                        for ar_points in active_regions:
-                            scaled_ar = [
-                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                for p in ar_points
-                            ]
-                            scaled_ars.append(scaled_ar)
-                        active_regions = scaled_ars
+                        active_regions = [
+                            rescale_points_vectorized(ar_points, scale_factor)
+                            for ar_points in active_regions
+                        ]
                     self.state.active_regions = active_regions
                     # Add active regions to visual display
                     for ar_points in active_regions:

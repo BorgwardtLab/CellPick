@@ -24,6 +24,41 @@ CHANNEL_COLORS = [
 ]
 
 
+def rescale_points_vectorized(
+    points: List[QPointF], scale_factor: float
+) -> List[QPointF]:
+    """
+    Rescale a list of QPointF using vectorized numpy operations.
+
+    Parameters
+    ----------
+    points : List[QPointF]
+        The list of points to rescale.
+    scale_factor : float
+        The factor to divide coordinates by.
+
+    Returns
+    -------
+    List[QPointF]
+        The rescaled points.
+    """
+    if not points or scale_factor == 1:
+        return points
+
+    # Extract coordinates into numpy arrays (vectorized extraction)
+    n = len(points)
+    coords = np.empty((n, 2), dtype=np.float64)
+    for i, p in enumerate(points):
+        coords[i, 0] = p.x()
+        coords[i, 1] = p.y()
+
+    # Vectorized division (single operation on entire array)
+    coords *= 1.0 / scale_factor
+
+    # Convert back to QPointF list
+    return [QPointF(coords[i, 0], coords[i, 1]) for i in range(n)]
+
+
 @dataclass
 class ImageChannel:
     """
@@ -94,6 +129,24 @@ class Polygon:
         self.score: Optional[float] = None
         self.color = QColor(255, 0, 255)
         self.original_id = original_id
+        self._cached_qpolygon: Optional[QPolygonF] = None
+
+    def get_qpolygon(self) -> QPolygonF:
+        """
+        Get cached QPolygonF, creating it if necessary.
+
+        Returns
+        -------
+        QPolygonF
+            The cached polygon for efficient rendering.
+        """
+        if self._cached_qpolygon is None:
+            self._cached_qpolygon = QPolygonF(self.points)
+        return self._cached_qpolygon
+
+    def invalidate_cache(self) -> None:
+        """Invalidate the cached QPolygonF (call when points change)."""
+        self._cached_qpolygon = None
 
     def set_color(self) -> None:
         """
@@ -623,7 +676,7 @@ class AppStateManager:
             The position to check for shape addition.
         """
         for idx in self.active_shape_ids:
-            poly = QPolygonF(self.shapes[idx].points)
+            poly = self.shapes[idx].get_qpolygon()
             if poly.containsPoint(scene_pos, Qt.OddEvenFill):
                 self.selected_shape_ids.append(idx)
                 self.image_viewer.update_polygon_display()
@@ -639,7 +692,7 @@ class AppStateManager:
             The position to check for shape deletion.
         """
         for i, idx in enumerate(self.selected_shape_ids):
-            poly = QPolygonF(self.shapes[idx].points)
+            poly = self.shapes[idx].get_qpolygon()
             if poly.containsPoint(scene_pos, Qt.OddEvenFill):
                 self.selected_shape_ids.pop(i)
                 self.image_viewer.update_polygon_display()
