@@ -32,6 +32,146 @@ try:
 except ImportError:
     SPATIALDATA_AVAILABLE = False
 
+# Import skimage.measure for standalone function (works even without spatialdata)
+try:
+    from skimage import measure as skimage_measure
+
+    SKIMAGE_AVAILABLE = True
+except ImportError:
+    SKIMAGE_AVAILABLE = False
+
+
+def extract_polygons_from_label_image(
+    label_array: np.ndarray,
+    min_area: int = 10,
+    max_cells: int = 100000,
+    progress_callback: Optional[callable] = None,
+) -> List[Tuple[List[QPointF], str, int]]:
+    """
+    Extract polygons from a segmentation label image.
+
+    This is a standalone function that works with any numpy label array
+    where pixel values represent cell/shape IDs (0 = background).
+
+    Parameters
+    ----------
+    label_array : np.ndarray
+        2D array where each unique non-zero value represents a cell ID.
+    min_area : int
+        Minimum area (in pixels) for a polygon to be included.
+    max_cells : int
+        Maximum number of cells to extract (to prevent hanging on huge datasets).
+    progress_callback : Optional[callable]
+        Callback function(current, total) to report progress.
+
+    Returns
+    -------
+    List[Tuple[List[QPointF], str, int]]
+        List of (polygon_points, label, original_mask_id) tuples.
+
+    Raises
+    ------
+    ImportError
+        If scikit-image is not installed.
+    """
+    if not SKIMAGE_AVAILABLE:
+        raise ImportError(
+            "scikit-image is required for label extraction. "
+            "Please install it with: pip install scikit-image"
+        )
+
+    # Ensure 2D array
+    label_array = np.squeeze(np.asarray(label_array))
+    if label_array.ndim != 2:
+        raise ValueError(f"Expected 2D label array, got shape {label_array.shape}")
+
+    polygons = []
+
+    # Convert to integer array for find_objects
+    try:
+        label_array_int = label_array.astype(np.int32)
+    except Exception:
+        # Fallback: convert to numeric first
+        flat = label_array.ravel()
+        numeric = pd.to_numeric(flat, errors="coerce")
+        label_array_int = numeric.values.reshape(label_array.shape)
+        label_array_int = np.nan_to_num(label_array_int, 0).astype(np.int32)
+
+    # FAST: Pre-compute bounding boxes for ALL labels at once
+    # slices[i] contains the bounding box for label (i+1)
+    slices = find_objects(label_array_int)
+
+    if not slices:
+        return []
+
+    # Get valid label IDs that have bounding boxes
+    valid_labels = [i + 1 for i, s in enumerate(slices) if s is not None]
+
+    # Limit number of cells
+    total_cells = len(valid_labels)
+    if total_cells > max_cells:
+        print(f"Warning: Found {total_cells} cells, limiting to {max_cells}")
+        valid_labels = valid_labels[:max_cells]
+
+    # Get image dimensions
+    img_height, img_width = label_array_int.shape
+    padding = 25  # Pixel padding around bounding box
+
+    # Iterate over valid label ids
+    for idx, label_id in enumerate(valid_labels):
+        # Report progress
+        if progress_callback and idx % 100 == 0:
+            progress_callback(idx, len(valid_labels))
+
+        # 1) Get pre-computed bounding box (instant lookup!)
+        bbox = slices[label_id - 1]  # slices[0] is for label 1
+
+        if bbox is None:
+            continue
+
+        # 2) Add padding to bounding box
+        row_min = max(0, bbox[0].start - padding)
+        row_max = min(img_height, bbox[0].stop + padding)
+        col_min = max(0, bbox[1].start - padding)
+        col_max = min(img_width, bbox[1].stop + padding)
+
+        # Extract the bounding box region from the label array
+        region = label_array_int[row_min:row_max, col_min:col_max]
+
+        # Create binary mask for this specific label in the region
+        mask_bbox = (region == label_id).astype(np.uint8)
+
+        # Check if cell has enough pixels
+        if np.sum(mask_bbox) < min_area:
+            continue
+
+        # 3) Find contours in the bounding box
+        contours = skimage_measure.find_contours(mask_bbox, 0.5)
+
+        if not contours:
+            continue
+
+        # Use the longest contour (outer boundary)
+        contour = max(contours, key=len)
+
+        # Check minimum points
+        if len(contour) < 3:
+            continue
+
+        # Approximate polygon to reduce points
+        coords = skimage_measure.approximate_polygon(contour, tolerance=1.0)
+
+        # Convert to QPointF and offset by bounding box origin to map to original image
+        if len(coords) >= 3:
+            # coords are (row, col) in bbox space, need to add bbox origin offsets
+            points = [
+                QPointF(float(x[1] + col_min), float(x[0] + row_min)) for x in coords
+            ]
+            # Store both the label string and the original mask ID
+            polygons.append((points, f"Cell_{int(label_id)}", int(label_id)))
+
+    return polygons
+
 
 class SpatialDataLoader:
     """

@@ -1786,28 +1786,188 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "Please load an image first")
             return
 
-        xml_path, _ = QFileDialog.getOpenFileName(
-            self, "Open XML containing shapes", "", "XML Files (*.xml);;All Files (*)"
-        )
-        if not xml_path:
-            return
-        self.xml_path = xml_path
-
-        # Enable calibration buttons now that shapes are loaded
-        self.page1.load_calibration_btn.setEnabled(True)
-        self.page1.manual_calibration_btn.setEnabled(True)
-        self.page1.confirm_calibration_btn.setEnabled(True)
-
-        # Show informative message
-        QMessageBox.information(
+        file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Shapes Loaded",
-            "Shape file has been successfully loaded!\n\n"
-            "To display the shapes on the image, please calibrate using one of the following methods:\n\n"
-            "• Load Calibration File: Use an existing calibration metadata file\n"
-            "• Manual Calibration: Define three calibration points manually\n\n"
-            "After selecting your calibration method, click 'Calibrate' to proceed.",
+            "Open file containing shapes",
+            "",
+            "All Supported Files (*.xml *.tif *.tiff *.png);;XML Files (*.xml);;TIFF Files (*.tif *.tiff);;PNG Files (*.png);;All Files (*)",
         )
+        if not file_path:
+            return
+
+        file_ext = Path(file_path).suffix.lower()
+
+        # Check if this is an image file (label mask) or XML
+        if file_ext in (".tif", ".tiff", ".png"):
+            # Load as label mask image
+            self._load_shapes_from_label_image(file_path)
+        else:
+            # Load as XML (existing behavior)
+            self.xml_path = file_path
+
+            # Enable calibration buttons now that shapes are loaded
+            self.page1.load_calibration_btn.setEnabled(True)
+            self.page1.manual_calibration_btn.setEnabled(True)
+            self.page1.confirm_calibration_btn.setEnabled(True)
+
+            # Show informative message
+            QMessageBox.information(
+                self,
+                "Shapes Loaded",
+                "Shape file has been successfully loaded!\n\n"
+                "To display the shapes on the image, please calibrate using one of the following methods:\n\n"
+                "• Load Calibration File: Use an existing calibration metadata file\n"
+                "• Manual Calibration: Define three calibration points manually\n\n"
+                "After selecting your calibration method, click 'Calibrate' to proceed.",
+            )
+
+    def _load_shapes_from_label_image(self, file_path: str) -> None:
+        """Load shapes from a label mask image file."""
+        from .spatialdata_io import extract_polygons_from_label_image, SKIMAGE_AVAILABLE
+        from PIL import Image
+
+        if not SKIMAGE_AVAILABLE:
+            QMessageBox.critical(
+                self,
+                "Missing Dependency",
+                "scikit-image is required for loading label mask images.\n"
+                "Please install it with: pip install scikit-image",
+            )
+            return
+
+        try:
+            # Load the image based on file type
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext in (".tif", ".tiff"):
+                label_array = tifimread(file_path)
+            else:
+                # Use PIL for PNG and other formats
+                label_array = np.array(Image.open(file_path))
+            label_array = np.squeeze(label_array)
+
+            if label_array.ndim != 2:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Image",
+                    f"Expected a 2D label mask image, got shape {label_array.shape}.\n"
+                    "The image should have pixel values representing cell IDs (0 = background).",
+                )
+                return
+
+            # Show progress dialog
+            progress = QProgressDialog(
+                "Extracting polygons from label mask...", "Cancel", 0, 100, self
+            )
+            progress.setWindowModality(Qt.ApplicationModal)
+            progress.setValue(10)
+            QApplication.processEvents()
+
+            # Define progress callback
+            def update_progress(current, total):
+                if progress.wasCanceled():
+                    raise RuntimeError("Operation cancelled by user")
+                percent = 10 + int(80 * current / max(1, total))
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Extracting polygons: {current}/{total} cells..."
+                )
+                QApplication.processEvents()
+
+            # Extract polygons
+            polygons = extract_polygons_from_label_image(
+                label_array,
+                min_area=10,
+                max_cells=100000,
+                progress_callback=update_progress,
+            )
+
+            if not polygons:
+                progress.close()
+                QMessageBox.warning(
+                    self,
+                    "No Shapes Found",
+                    "No valid shapes were found in the label mask image.",
+                )
+                return
+
+            progress.setLabelText("Adding shapes to viewer...")
+            progress.setValue(90)
+            QApplication.processEvents()
+
+            # Check if shapes need to be scaled to match current image
+            img_height = self.image_viewer.height
+            img_width = self.image_viewer.width
+            label_height, label_width = label_array.shape
+
+            scale_factor = 1.0
+            if img_height and img_width:
+                # Check if label mask dimensions differ from displayed image
+                height_ratio = label_height / img_height
+                width_ratio = label_width / img_width
+
+                # Use average ratio if they're close, otherwise warn
+                if abs(height_ratio - width_ratio) < 0.1:
+                    scale_factor = (height_ratio + width_ratio) / 2
+                elif height_ratio != 1.0 or width_ratio != 1.0:
+                    # Dimensions don't match proportionally
+                    reply = QMessageBox.question(
+                        self,
+                        "Dimension Mismatch",
+                        f"Label mask dimensions ({label_width}x{label_height}) differ from\n"
+                        f"displayed image dimensions ({img_width}x{img_height}).\n\n"
+                        f"Do you want to scale the shapes to fit the displayed image?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    )
+                    if reply == QMessageBox.Yes:
+                        scale_factor = height_ratio  # Use height ratio
+
+            # Reset and add shapes
+            self.state.reset_shapes()
+
+            from .components import Polygon, rescale_points_vectorized
+
+            for points, label, original_id in polygons:
+                # Scale points if needed
+                if scale_factor > 1.0:
+                    points = rescale_points_vectorized(points, scale_factor)
+                polygon = Polygon(points, label, original_id=original_id)
+                self.state.shapes.append(polygon)
+
+            # Update display
+            self.image_viewer.update_polygon_display()
+
+            # Create MockDVPXML for compatibility
+            self.im_xml = MockDVPXML(self.state.shapes)
+
+            # Clear xml_path since we loaded from image
+            self.xml_path = None
+
+            progress.setValue(100)
+            progress.close()
+
+            # Switch to advanced home state
+            if self.state.data_load_mode == DataLoadMode.NONE:
+                self.set_image_workflow_mode()
+            self.state.enable_advanced_home()
+
+            QMessageBox.information(
+                self,
+                "Shapes Loaded",
+                f"Successfully loaded {len(polygons)} shapes from label mask.\n\n"
+                f"You can now proceed with landmark and active region selection.",
+            )
+
+        except RuntimeError as e:
+            if "cancelled" in str(e).lower():
+                return
+            QMessageBox.warning(self, "Cancelled", "Shape loading was cancelled.")
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error Loading Shapes",
+                f"Failed to load shapes from label mask:\n{str(e)}",
+            )
 
     def load_calibration(self) -> None:
         assert self.state.data_load_mode == DataLoadMode.IMAGE
