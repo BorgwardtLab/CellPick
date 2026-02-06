@@ -1,69 +1,105 @@
-app package
-===========
+cellpick.app package
+====================
 
-Submodules
+This package provides the main application components for CellPick.
+
+Core Module
+-----------
+
+The core module contains fundamental data structures and state management.
+
+cellpick.app.core.state
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Application state management including ``AppState``, ``DataLoadMode``, and ``AppStateManager``.
+
+.. automodule:: cellpick.app.core.state
+   :members:
+   :show-inheritance:
+
+cellpick.app.core.polygon
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Polygon geometry utilities for shape representation.
+
+.. automodule:: cellpick.app.core.polygon
+   :members:
+   :show-inheritance:
+
+cellpick.app.core.channel
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Image channel data structures and color mappings.
+
+.. automodule:: cellpick.app.core.channel
+   :members:
+   :show-inheritance:
+
+I/O Module
 ----------
 
-app.algorithms module
----------------------
+The I/O module handles file operations including XML parsing and export.
 
-.. automodule:: app.algorithms
+cellpick.app.io.xml\_io
+^^^^^^^^^^^^^^^^^^^^^^^
+
+XML and metadata parsing classes (``DVPXML``, ``MockDVPXML``, ``DVPMETA``, ``ImXML``).
+
+.. automodule:: cellpick.app.io.xml_io
    :members:
    :show-inheritance:
-   :undoc-members:
 
-app.components module
----------------------
+cellpick.app.io.export
+^^^^^^^^^^^^^^^^^^^^^^
 
-.. automodule:: app.components
+Export functions for XML, landmarks, and active regions.
+
+.. automodule:: cellpick.app.io.export
    :members:
    :show-inheritance:
-   :undoc-members:
 
-app.image\_viewer module
-------------------------
+SpatialData Integration
+-----------------------
 
-.. automodule:: app.image_viewer
+.. automodule:: cellpick.app.spatialdata_io
    :members:
    :show-inheritance:
-   :undoc-members:
 
-app.style module
-----------------
+Algorithms
+----------
 
-.. automodule:: app.style
+.. automodule:: cellpick.app.algorithms
    :members:
    :show-inheritance:
-   :undoc-members:
 
-app.ui\_components module
--------------------------
+UI Components
+-------------
 
-.. automodule:: app.ui_components
+cellpick.app.ui\_main
+^^^^^^^^^^^^^^^^^^^^^
+
+.. automodule:: cellpick.app.ui_main
    :members:
    :show-inheritance:
-   :undoc-members:
 
-app.ui\_main module
--------------------
+cellpick.app.ui\_components
+^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. automodule:: app.ui_main
+.. automodule:: cellpick.app.ui_components
    :members:
    :show-inheritance:
-   :undoc-members:
 
-app.utils module
-----------------
+cellpick.app.image\_viewer
+^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. automodule:: app.utils
+.. automodule:: cellpick.app.image_viewer
    :members:
    :show-inheritance:
-   :undoc-members:
 
-Module contents
----------------
+Style
+-----
 
-.. automodule:: app
+.. automodule:: cellpick.app.style
    :members:
    :show-inheritance:
-   :undoc-members:
+

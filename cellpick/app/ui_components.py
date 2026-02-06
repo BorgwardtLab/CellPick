@@ -2,41 +2,249 @@ from copy import deepcopy
 from typing import Any, List, Optional, Tuple
 
 from PySide6.QtCore import (
-    QEasingCurve,
     QPointF,
-    QPropertyAnimation,
-    QRect,
     QRectF,
     Qt,
     Signal,
 )
 from PySide6.QtGui import (
     QColor,
-    QImage,
     QMouseEvent,
     QPainter,
     QPen,
-    QPixmap,
     QPolygonF,
+    QBrush,
+    QLinearGradient,
 )
 from PySide6.QtWidgets import (
-    QApplication,
     QDialog,
-    QFrame,
     QGraphicsItem,
-    QGraphicsProxyWidget,
-    QGraphicsScene,
-    QGraphicsView,
-    QGraphicsWidget,
     QLabel,
     QProgressBar,
     QPushButton,
     QVBoxLayout,
     QWidget,
+    QHBoxLayout,
 )
 
 
+class RangeSlider(QWidget):
+    """
+    A dual-handle range slider for min/max value selection.
+
+    Mimics the Cellpose saturation slider style with draggable handles
+    for setting minimum and maximum values in a 0-1 range.
+
+    Attributes
+    ----------
+    rangeChanged : Signal
+        Emitted when either handle is moved. Carries (min_val, max_val) as floats.
+    color : Tuple[int, int, int]
+        RGB color for the active range display.
+    """
+
+    rangeChanged = Signal(float, float)  # Emits (min_val, max_val) as floats 0-1
+
+    def __init__(
+        self,
+        color: Tuple[int, int, int] = (100, 100, 255),
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        """
+        Initialize the RangeSlider widget.
+
+        Parameters
+        ----------
+        color : Tuple[int, int, int], optional
+            RGB color for the active range (default is (100, 100, 255)).
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
+        super().__init__(parent)
+        self.color = color
+        self._min_val = 0.0  # 0-1 range
+        self._max_val = 1.0  # 0-1 range
+        self._dragging = None  # 'min', 'max', or None
+        self._handle_width = 8
+        self._track_height = 6
+        self.setMinimumHeight(20)
+        self.setMinimumWidth(100)
+        self.setCursor(Qt.PointingHandCursor)
+
+    @property
+    def min_val(self) -> float:
+        """float: The current minimum value (0-1 scale)."""
+        return self._min_val
+
+    @property
+    def max_val(self) -> float:
+        """float: The current maximum value (0-1 scale)."""
+        return self._max_val
+
+    def set_range(self, min_val: float, max_val: float) -> None:
+        """
+        Set the range values.
+
+        Parameters
+        ----------
+        min_val : float
+            Minimum value (clamped to 0-1).
+        max_val : float
+            Maximum value (clamped to 0-1).
+        """
+        self._min_val = max(0.0, min(1.0, min_val))
+        self._max_val = max(0.0, min(1.0, max_val))
+        if self._min_val > self._max_val:
+            self._min_val, self._max_val = self._max_val, self._min_val
+        self.update()
+
+    def _val_to_x(self, val: float) -> int:
+        """Convert value (0-1) to x coordinate."""
+        usable_width = self.width() - 2 * self._handle_width
+        return int(self._handle_width + val * usable_width)
+
+    def _x_to_val(self, x: int) -> float:
+        """Convert x coordinate to value (0-1)."""
+        usable_width = self.width() - 2 * self._handle_width
+        val = (x - self._handle_width) / usable_width
+        return max(0.0, min(1.0, val))
+
+    def set_color(self, color: Tuple[int, int, int]) -> None:
+        """
+        Update the slider color.
+
+        Parameters
+        ----------
+        color : Tuple[int, int, int]
+            RGB color for the active range.
+        """
+        self.color = color
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        """Paint the slider track, active range, and handles."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        h = self.height()
+        track_y = (h - self._track_height) // 2
+
+        # Draw background track (dark)
+        painter.setBrush(QBrush(QColor(40, 40, 40)))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(
+            self._handle_width,
+            track_y,
+            self.width() - 2 * self._handle_width,
+            self._track_height,
+            self._track_height // 2,
+            self._track_height // 2,
+        )
+
+        # Draw active range (colored)
+        min_x = self._val_to_x(self._min_val)
+        max_x = self._val_to_x(self._max_val)
+
+        # Create gradient for the active range
+        gradient = QLinearGradient(min_x, 0, max_x, 0)
+        base_color = QColor(self.color[0], self.color[1], self.color[2])
+        gradient.setColorAt(0, base_color.darker(120))
+        gradient.setColorAt(1, base_color)
+
+        painter.setBrush(QBrush(gradient))
+        painter.drawRoundedRect(
+            min_x,
+            track_y,
+            max_x - min_x,
+            self._track_height,
+            self._track_height // 2,
+            self._track_height // 2,
+        )
+
+        # Draw handles
+        handle_h = h - 4
+        handle_y = 2
+
+        # Min handle
+        painter.setBrush(QBrush(QColor(60, 60, 60)))
+        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        painter.drawRoundedRect(
+            min_x - self._handle_width // 2,
+            handle_y,
+            self._handle_width,
+            handle_h,
+            2,
+            2,
+        )
+
+        # Max handle
+        painter.drawRoundedRect(
+            max_x - self._handle_width // 2,
+            handle_y,
+            self._handle_width,
+            handle_h,
+            2,
+            2,
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse press to start dragging a handle."""
+        if event.button() == Qt.LeftButton:
+            x = event.pos().x()
+            min_x = self._val_to_x(self._min_val)
+            max_x = self._val_to_x(self._max_val)
+
+            # Check which handle is closer
+            dist_min = abs(x - min_x)
+            dist_max = abs(x - max_x)
+
+            if dist_min <= dist_max and dist_min < self._handle_width * 2:
+                self._dragging = "min"
+            elif dist_max < self._handle_width * 2:
+                self._dragging = "max"
+            else:
+                # Click in middle - move nearest handle
+                if dist_min < dist_max:
+                    self._dragging = "min"
+                else:
+                    self._dragging = "max"
+                self._update_value(x)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse move to update handle position."""
+        if self._dragging:
+            self._update_value(event.pos().x())
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse release to stop dragging."""
+        self._dragging = None
+
+    def _update_value(self, x: int) -> None:
+        """Update the dragged handle value and emit rangeChanged signal."""
+        val = self._x_to_val(x)
+
+        if self._dragging == "min":
+            self._min_val = min(val, self._max_val - 0.01)
+        elif self._dragging == "max":
+            self._max_val = max(val, self._min_val + 0.01)
+
+        self.update()
+        self.rangeChanged.emit(self._min_val, self._max_val)
+
+
 class AnimatedButton(QPushButton):
+    """
+    A styled QPushButton with rounded corners and press animation.
+
+    Provides a modern dark theme button with customizable colors
+    and smooth pressed/unpressed state styling.
+
+    Attributes
+    ----------
+    style : str
+        The CSS style template for the button.
+    """
+
     def __init__(
         self,
         text: str,
@@ -44,6 +252,20 @@ class AnimatedButton(QPushButton):
         color1: str = "50,50,50",
         color2: str = "0,0,0",
     ) -> None:
+        """
+        Initialize the AnimatedButton.
+
+        Parameters
+        ----------
+        text : str
+            The button label text.
+        size : Tuple[int, int], optional
+            (height, minimum_width) of the button (default is (30, 200)).
+        color1 : str, optional
+            RGB string for normal state background (default is "50,50,50").
+        color2 : str, optional
+            RGB string for pressed state background (default is "0,0,0").
+        """
         super().__init__(text)
         self.style = """
             QPushButton:!pressed {{
@@ -80,6 +302,23 @@ class AnimatedButton(QPushButton):
 
 
 class PolygonPreviewItem(QGraphicsItem):
+    """
+    A QGraphicsItem for drawing polygon previews with dots at vertices.
+
+    Used to show in-progress polygon drawings for landmarks and active regions.
+
+    Attributes
+    ----------
+    points : List[QPointF]
+        The polygon vertices.
+    color : Any
+        The color for the polygon outline and vertices.
+    pen_w : float
+        The pen width for the outline.
+    dot_size : float
+        The radius of vertex dots.
+    """
+
     points: List[QPointF]
     color: Any
     pen_w: float
@@ -93,6 +332,22 @@ class PolygonPreviewItem(QGraphicsItem):
         dot_size: float = 5,
         parent: Optional[QGraphicsItem] = None,
     ) -> None:
+        """
+        Initialize the PolygonPreviewItem.
+
+        Parameters
+        ----------
+        points : Optional[List[QPointF]]
+            Initial polygon vertices (will be deep copied).
+        color : Any, optional
+            Color for the polygon (default is Qt.green).
+        pen_w : float, optional
+            Pen width for the outline (default is 2).
+        dot_size : float, optional
+            Radius of vertex dots (default is 5).
+        parent : Optional[QGraphicsItem], optional
+            Parent graphics item (default is None).
+        """
         super().__init__(parent)
         self.points = deepcopy(points) if points else []
         self.color = color
@@ -101,6 +356,7 @@ class PolygonPreviewItem(QGraphicsItem):
         self.setZValue(1)
 
     def boundingRect(self) -> QRectF:
+        """Return the bounding rectangle of the polygon."""
         if not self.points:
             return QRectF()
         xs = [p.x() for p in self.points]
@@ -116,6 +372,7 @@ class PolygonPreviewItem(QGraphicsItem):
         )
 
     def paint(self, painter: QPainter, option: Any, widget: Optional[QWidget]) -> None:
+        """Paint the polygon outline and vertex dots."""
         if not self.points:
             return
         pen = QPen(self.color, self.pen_w)
@@ -131,7 +388,30 @@ class PolygonPreviewItem(QGraphicsItem):
 
 
 class ProgressDialog(QDialog):
-    def __init__(self, title="Loading...", parent=None):
+    """
+    A modal dialog showing a progress bar and status label.
+
+    Used for long-running operations like loading shapes.
+
+    Attributes
+    ----------
+    label : QLabel
+        The status text label.
+    progress : QProgressBar
+        The progress bar widget.
+    """
+
+    def __init__(self, title: str = "Loading...", parent: Optional[QWidget] = None):
+        """
+        Initialize the ProgressDialog.
+
+        Parameters
+        ----------
+        title : str, optional
+            The dialog window title (default is "Loading...").
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.setWindowTitle(title)
         self.setModal(True)
@@ -144,34 +424,88 @@ class ProgressDialog(QDialog):
         layout.addWidget(self.progress)
         self.setLayout(layout)
 
-    def update_progress(self, value, text=None):
+    def update_progress(self, value: int, text: Optional[str] = None) -> None:
+        """
+        Update the progress bar value and optionally the status text.
+
+        Parameters
+        ----------
+        value : int
+            Progress value (0-100).
+        text : Optional[str], optional
+            New status text to display.
+        """
         self.progress.setValue(value)
         if text is not None:
             self.label.setText(text)
 
 
 class ClickableLabel(QLabel):
-    """A clickable label widget for channel names."""
+    """
+    A clickable label widget for channel names.
+
+    Emits a clicked signal when left-clicked.
+
+    Attributes
+    ----------
+    clicked : Signal
+        Emitted when the label is left-clicked.
+    """
 
     clicked = Signal()
 
     def __init__(self, text: str = "", parent: Optional[QWidget] = None):
+        """
+        Initialize the ClickableLabel.
+
+        Parameters
+        ----------
+        text : str, optional
+            The label text (default is "").
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(text, parent)
         self.setCursor(Qt.PointingHandCursor)
         self.setStyleSheet("color: #404040; text-decoration: underline;")
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse press to emit clicked signal."""
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
 
 class ClickableColorLabel(QLabel):
-    """A clickable color label widget for channel colors."""
+    """
+    A clickable color swatch widget for channel colors.
+
+    Displays a small colored square that emits a clicked signal
+    when left-clicked, used for color picker dialogs.
+
+    Attributes
+    ----------
+    clicked : Signal
+        Emitted when the label is left-clicked.
+    color : Tuple[int, int, int]
+        The current RGB color.
+    """
 
     clicked = Signal()
 
-    def __init__(self, color, parent: Optional[QWidget] = None):
+    def __init__(
+        self, color: Tuple[int, int, int], parent: Optional[QWidget] = None
+    ) -> None:
+        """
+        Initialize the ClickableColorLabel.
+
+        Parameters
+        ----------
+        color : Tuple[int, int, int]
+            RGB color for the swatch.
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.color = color
         self.update_style()
@@ -179,28 +513,66 @@ class ClickableColorLabel(QLabel):
         self.setFixedSize(20, 20)
 
     def update_style(self) -> None:
-        """Update the style sheet with the current color, rounded corners, and thick black border."""
+        """Update the style sheet with the current color, rounded corners, and border."""
         self.setStyleSheet(
             f"background-color: rgb({self.color[0]}, {self.color[1]}, {self.color[2]}); "
             f"border: 2px solid black; "
             f"border-radius: 4px;"
         )
 
-    def set_color(self, color) -> None:
-        """Set the color and update the display."""
+    def set_color(self, color: Tuple[int, int, int]) -> None:
+        """
+        Set the color and update the display.
+
+        Parameters
+        ----------
+        color : Tuple[int, int, int]
+            New RGB color.
+        """
         self.color = color
         self.update_style()
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
+        """Handle mouse press to emit clicked signal."""
         if event.button() == Qt.LeftButton:
             self.clicked.emit()
         super().mousePressEvent(event)
 
 
 class LoadLabelsDialog(QDialog):
-    """Dialog for loading cell labels from CSV or SpatialData table."""
+    """
+    Dialog for loading cell labels from CSV or SpatialData table.
 
-    def __init__(self, spatial_data_loader=None, parent=None):
+    Provides options to load labels from a CSV file, from a SpatialData
+    table column, or to delete existing labels.
+
+    Attributes
+    ----------
+    spatial_data_loader : Optional[SpatialDataLoader]
+        Reference to the SpatialData loader for table access.
+    selected_source : Optional[str]
+        The selected source type ('csv', 'spatialdata', or 'delete').
+    csv_path : Optional[str]
+        Path to the selected CSV file.
+    table_name : Optional[str]
+        Name of the selected SpatialData table.
+    column_name : Optional[str]
+        Name of the selected label column.
+    """
+
+    def __init__(
+        self, spatial_data_loader: Any = None, parent: Optional[QWidget] = None
+    ) -> None:
+        """
+        Initialize the LoadLabelsDialog.
+
+        Parameters
+        ----------
+        spatial_data_loader : Optional[Any]
+            Reference to SpatialDataLoader for table access.
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.setWindowTitle("Load Cell Labels")
         self.setMinimumWidth(400)
@@ -307,7 +679,7 @@ class LoadLabelsDialog(QDialog):
         self.csv_radio.setChecked(True)
         sd_group.setEnabled(False)
 
-    def browse_csv(self):
+    def browse_csv(self) -> None:
         """Open file dialog to select CSV file."""
         from PySide6.QtWidgets import QFileDialog
 
@@ -318,8 +690,15 @@ class LoadLabelsDialog(QDialog):
             self.csv_path = file_path
             self.csv_path_label.setText(file_path.split("/")[-1])
 
-    def on_table_changed(self, table_name):
-        """Update column combo when table selection changes."""
+    def on_table_changed(self, table_name: str) -> None:
+        """
+        Update column combo when table selection changes.
+
+        Parameters
+        ----------
+        table_name : str
+            Name of the selected table.
+        """
         if not self.spatial_data_loader or not table_name:
             return
 
@@ -364,8 +743,8 @@ class LoadLabelsDialog(QDialog):
             if idx >= 0:
                 self.id_combo.setCurrentIndex(idx)
 
-    def accept(self):
-        """Validate and accept the dialog."""
+    def accept(self) -> None:
+        """Validate selections and accept the dialog."""
         if self.csv_radio.isChecked():
             if not self.csv_path:
                 from PySide6.QtWidgets import QMessageBox

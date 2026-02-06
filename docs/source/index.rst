@@ -1,41 +1,74 @@
-.. cellpick documentation master file, created by
-   sphinx-quickstart on Mon Jun 30 16:14:16 2025.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+.. cellpick documentation master file
 
 .. image:: ../../cellpick/assets/logo-h.svg
-   :alt: Load Shapes Dialog
+   :alt: CellPick Logo
    :height: 200
    :width: 4000
+
+CellPick
+========
 
 CellPick is a computational tool for facilitating the selection of cells for laser microdissection in single cell proteomics applications.
 It introduces a custom shape selection technique that employs a combinatorial optimization procedure for the selection of cells, ensuring the selection of non-contiguous
 shapes, while approximately maximizing coverage within a restricted tissue area.
 
-Moreover, as often in spatial proteomics one seeks a statistical correlation between protein intensities and the positions of the cells at hand, this tool makes it easy to establish a gradient along a relevant axis between two landmarks. 
-The selected shapes are then automatically endowed with a value indicating how close they are to the two points of interest. This allows to find their position on the gradient of interest, 
-which in turn allows to correlate protein intensity levels and the closeness to the landmarks.
-
-
 .. image:: _assets/workflow_overview.png
-   :alt: Load Shapes Dialog
+   :alt: CellPick Workflow Overview
    :width: 1000
 
-.. contents::
-   :local:
-   :depth: 2
+Key Features
+------------
+
+- **Flexible Data Loading**: Load microscopy images (TIFF, CZI) or SpatialData (.zarr) stores with multi-channel support
+- **Multi-resolution Support**: Work with large images using adaptive resolution loading
+- **Spatial Gradient Analysis**: Establish gradients between landmarks to correlate protein intensities with cell positions
+- **Smart Cell Selection**: Multiple algorithms for selecting non-contiguous cells (k-center, random, per-region, per-label)
+- **Label-based Selection**: Load cell type labels and select cells stratified by label
+- **Per-channel Controls**: Fine-tune visibility and saturation for each channel independently
+- **Comprehensive Export**: Export to XML (LMD-compatible) or SpatialData formats
+
+
+.. grid:: 1 2 2 2
+    :gutter: 3
+
+    .. grid-item-card:: Installation
+        :link: installation
+        :link-type: doc
+
+        Get started with ``cellpick`` installation via pip, pipx, or conda.
+
+    .. grid-item-card:: Launch
+        :link: launch
+        :link-type: doc
+
+        Learn how to launch the ``cellpick`` application.
+
+    .. grid-item-card:: Workflow
+        :link: workflow/index
+        :link-type: doc
+
+        Step-by-step guide to the complete ``cellpick`` workflow.
+
+    .. grid-item-card:: Keyboard Shortcuts
+        :link: shortcuts
+        :link-type: doc
+
+        Reference for all keyboard shortcuts and mouse controls.
+
+    .. grid-item-card:: API Reference
+        :link: api
+        :link-type: doc
+
+        Detailed documentation of the ``cellpick`` API.
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
+   :hidden:
 
    installation
    launch
-   workflow
+   workflow/index
+   shortcuts
    api
-
-.. include:: installation.rst
-.. include:: launch.rst
-.. include:: workflow.rst
 
 

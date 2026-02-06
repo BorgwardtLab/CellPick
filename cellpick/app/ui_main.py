@@ -10,11 +10,8 @@ import numpy as np
 from scipy import interpolate
 import pandas as pd
 from czifile import imread as cziimread
-from pathlib import Path
 from PySide6.QtCore import (
-    QBuffer,
     QByteArray,
-    QIODevice,
     QObject,
     QPointF,
     QRectF,
@@ -29,7 +26,6 @@ from PySide6.QtGui import (
     QFont,
     QIcon,
     QImage,
-    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -45,10 +41,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QGraphicsPixmapItem,
-    QGraphicsPolygonItem,
-    QGraphicsScene,
-    QGraphicsView,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -72,7 +64,14 @@ from PySide6.QtWidgets import (
 )
 from tifffile import imread as tifimread
 
-from .components import CHANNEL_COLORS, AppState, AppStateManager, DataLoadMode, Polygon
+from .components import (
+    CHANNEL_COLORS,
+    AppState,
+    AppStateManager,
+    DataLoadMode,
+    Polygon,
+    rescale_points_vectorized,
+)
 from .image_viewer import ImageViewer
 from .ui_components import (
     AnimatedButton,
@@ -116,9 +115,31 @@ if sys.platform == "darwin":
 
 
 class ScrollableContainer(QWidget):
+    """
+    A scrollable container widget with vertical layout.
+
+    Items are added from the top with a stretch at the bottom to
+    keep content aligned to the top of the container.
+
+    Attributes
+    ----------
+    inner_layout : QVBoxLayout
+        The layout where widgets are added.
+    """
+
     inner_layout: QVBoxLayout
 
     def __init__(self, height: int, parent: Optional[QWidget] = None) -> None:
+        """
+        Initialize the ScrollableContainer.
+
+        Parameters
+        ----------
+        height : int
+            Fixed height of the container.
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.setFixedHeight(height)
         layout = QVBoxLayout(self)
@@ -127,22 +148,55 @@ class ScrollableContainer(QWidget):
         scroll.setWidgetResizable(True)
         content = QWidget()
         self.inner_layout = QVBoxLayout(content)
-        self.inner_layout.setSpacing(0)  # Reduce spacing between items
+        self.inner_layout.setSpacing(2)  # Small spacing between items
         self.inner_layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins
+        self.inner_layout.addStretch()  # Push items to top
         content.setStyleSheet("background-color: white;")
         scroll.setStyleSheet("background-color: white; border: none")
         scroll.setWidget(content)
         layout.addWidget(scroll)
 
+    def addWidget(self, widget: QWidget) -> None:
+        """
+        Add a widget to the container.
+
+        Parameters
+        ----------
+        widget : QWidget
+            The widget to add. Inserted before the stretch to keep items at top.
+        """
+        # Insert before the stretch (which is at the end)
+        self.inner_layout.insertWidget(self.inner_layout.count() - 1, widget)
+
 
 class ResolutionSelectionDialog(QDialog):
     """
     Dialog for selecting image resolution level from a multiscale SpatialData image.
+
+    Displays available resolution levels with their dimensions and allows
+    user to select which one to load.
+
+    Attributes
+    ----------
+    selected_level : int
+        The selected resolution level index.
+    list_widget : QListWidget
+        The list widget showing resolution options.
     """
 
     def __init__(
         self, level_info: List[dict], parent: Optional[QWidget] = None
     ) -> None:
+        """
+        Initialize the ResolutionSelectionDialog.
+
+        Parameters
+        ----------
+        level_info : List[dict]
+            List of dicts with keys: 'level', 'width', 'height', 'channels', 'scale_factor'.
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.setWindowTitle("Select Image Resolution")
         self.setMinimumWidth(450)
@@ -196,7 +250,14 @@ class ResolutionSelectionDialog(QDialog):
         layout.addWidget(button_box)
 
     def get_selected_level(self) -> int:
-        """Return the selected resolution level."""
+        """
+        Return the selected resolution level.
+
+        Returns
+        -------
+        int
+            The selected level index (0-based).
+        """
         current_item = self.list_widget.currentItem()
         if current_item:
             return current_item.data(Qt.UserRole)
@@ -204,17 +265,43 @@ class ResolutionSelectionDialog(QDialog):
 
 
 class SelectionPage(QWidget):
+    """
+    First page of the main window for data loading and image adjustment.
+
+    Provides controls for loading channels, SpatialData, shapes,
+    and adjusting image display settings like saturation.
+
+    Attributes
+    ----------
+    channel_control_panel : ScrollableContainer
+        Panel for channel visibility controls.
+    saturation_panel : ScrollableContainer
+        Panel for per-channel saturation sliders.
+    add_channel_btn : AnimatedButton
+        Button to add image channels.
+    add_spatialdata_btn : AnimatedButton
+        Button to load SpatialData files.
+    load_shapes_btn : AnimatedButton
+        Button to load shape files.
+    auto_saturation_checkbox : QCheckBox
+        Checkbox for auto-adjusting saturation.
+    next_btn : AnimatedButton
+        Button to proceed to the next page.
+    """
+
     channel_control_panel: ScrollableContainer
     add_channel_btn: AnimatedButton
     add_spatialdata_btn: AnimatedButton
     load_shapes_btn: AnimatedButton
-    gamma_slider: QSlider
+    auto_saturation_checkbox: QCheckBox
+    saturation_panel: ScrollableContainer
     refresh_btn: AnimatedButton
     reset_btn: AnimatedButton
     next_btn: AnimatedButton
     buttons: List[Any]
 
     def __init__(self) -> None:
+        """Initialize the SelectionPage with all UI controls."""
         super().__init__()
         layout = QVBoxLayout(self)
         self.channel_control_panel = ScrollableContainer(height=120)
@@ -232,12 +319,15 @@ class SelectionPage(QWidget):
         self.manual_calibration_btn = AnimatedButton("Manual", size=(30, 96))
         self.confirm_calibration_btn = AnimatedButton("Calibrate")
         self.select_shape_color_btn = AnimatedButton("Select shape color")
-        self.gamma_slider = QSlider(Qt.Horizontal)
-        self.gamma_slider.setRange(-100, 100)
-        self.gamma_slider.setValue(0)
-        self.contrast_slider = QSlider(Qt.Horizontal)
-        self.contrast_slider.setRange(-100, 100)
-        self.contrast_slider.setValue(0)
+
+        # Auto-adjust saturation checkbox
+        self.auto_saturation_checkbox = QCheckBox("Auto-adjust saturation")
+        self.auto_saturation_checkbox.setChecked(True)
+        self.auto_saturation_checkbox.setStyleSheet("color: #333333;")
+
+        # Per-channel saturation sliders container
+        self.saturation_panel = ScrollableContainer(height=100)
+
         self.refresh_btn = AnimatedButton("Refresh")
         self.reset_btn = AnimatedButton("Reset view")
         self.next_btn = AnimatedButton(
@@ -248,10 +338,8 @@ class SelectionPage(QWidget):
         button_layout1.addWidget(self.channel_control_panel)
         button_layout1.addWidget(self.load_shapes_btn)
         button_layout1.addWidget(self.load_labels_btn)
-        button_layout2.addWidget(QLabel("Brightness"))
-        button_layout2.addWidget(self.gamma_slider)
-        button_layout2.addWidget(QLabel("Contrast"))
-        button_layout2.addWidget(self.contrast_slider)
+        button_layout2.addWidget(self.auto_saturation_checkbox)
+        button_layout2.addWidget(self.saturation_panel)
         button_layout2.addWidget(self.refresh_btn)
         button_layout2.addWidget(self.select_shape_color_btn)
 
@@ -271,11 +359,10 @@ class SelectionPage(QWidget):
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.next_btn)
         self.buttons = self.findChildren(AnimatedButton)
-        self.buttons.append(self.gamma_slider)
-        self.buttons.append(self.contrast_slider)
         self.select_shape_color_btn.clicked.connect(self.pick_shape_color)
 
-    def pick_shape_color(self):
+    def pick_shape_color(self) -> None:
+        """Open a color dialog to select the shape outline color."""
         # Robustly find the MainWindow and use its shape_outline_color
         main_window = self.parent()
         while main_window and not hasattr(main_window, "shape_outline_color"):
@@ -292,6 +379,32 @@ class SelectionPage(QWidget):
 
 
 class ActionPage(QWidget):
+    """
+    Second page of the main window for shape selection and export.
+
+    Provides controls for landmarks, active regions, shape selection
+    algorithms, and exporting results.
+
+    Attributes
+    ----------
+    back_btn : AnimatedButton
+        Button to return to the first page.
+    add_lnd_btn : AnimatedButton
+        Button to add landmarks.
+    add_ar_btn : AnimatedButton
+        Button to add active regions.
+    select_shapes_btn : AnimatedButton
+        Button to run shape selection algorithm.
+    k_box : QSpinBox
+        Spinner for number of shapes to select.
+    clustering_type : QComboBox
+        Dropdown for selection algorithm type.
+    export_btn : AnimatedButton
+        Button to export selected shapes.
+    export_spatialdata_btn : AnimatedButton
+        Button to export to SpatialData format.
+    """
+
     back_btn: AnimatedButton
     add_lnd_btn: AnimatedButton
     delete_last_point_lnd_btn: AnimatedButton
@@ -316,6 +429,7 @@ class ActionPage(QWidget):
     buttons: List[Any]
 
     def __init__(self) -> None:
+        """Initialize the ActionPage with all UI controls."""
         super().__init__()
         layout = QVBoxLayout(self)
         button_panel1 = QGroupBox("Landmarks")
@@ -429,12 +543,16 @@ class ActionPage(QWidget):
         for checkbox in self.label_checkboxes.values():
             checkbox.deleteLater()
         self.label_checkboxes.clear()
-        for i in range(self.label_checkboxes_layout.count()):
-            self.label_checkboxes_layout.itemAt(i).widget().deleteLater()
+
+        # Clear layout items (but skip stretch items which don't have widgets)
+        while self.label_checkboxes_layout.count() > 1:  # Keep the stretch
+            item = self.label_checkboxes_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
 
         if labels is None:
-            # Remove "Select k per label" option to clustering type if present
-            if self.clustering_type.count() == 4:
+            # Remove "Select k per label" option if present (count > 3)
+            while self.clustering_type.count() > 3:
                 self.clustering_type.removeItem(3)
             return
 
@@ -463,7 +581,8 @@ class ActionPage(QWidget):
             h_layout.addStretch()
 
             self.label_checkboxes[label] = checkbox
-            self.label_checkboxes_layout.addWidget(container)
+            # Use the container's addWidget to insert before stretch
+            self.label_checkboxes_container.addWidget(container)
 
         # Add "Select k per label" option to clustering type if not already present
         if self.clustering_type.count() == 3:
@@ -503,6 +622,30 @@ class ActionPage(QWidget):
 
 
 class MainWindow(QMainWindow):
+    """
+    Main application window for CellPick.
+
+    Manages the overall application layout, state, and coordinates
+    between the selection page, action page, and image viewer.
+
+    Attributes
+    ----------
+    state : AppStateManager
+        The application state manager.
+    image_viewer : ImageViewer
+        The main image display widget.
+    page1 : SelectionPage
+        The data loading and image adjustment page.
+    page2 : ActionPage
+        The shape selection and export page.
+    stack : QStackedWidget
+        Widget stack for switching between pages.
+    scale : float
+        Current image scale factor.
+    shape_outline_color : QColor
+        Color used for shape outlines.
+    """
+
     channels: List[str]
     state: AppStateManager
     stack: QStackedWidget
@@ -519,6 +662,7 @@ class MainWindow(QMainWindow):
     xml_path, meta_path = None, None
 
     def __init__(self) -> None:
+        """Initialize the MainWindow with all UI components."""
         super().__init__()
         self.image_resolution = 25000
         self.channels: List[str] = []
@@ -530,6 +674,7 @@ class MainWindow(QMainWindow):
         self._spatialdata_categorical_columns = []
         self._loaded_spatialdata_path = None
         self._spatialdata_scale_factor = 1  # Track scaling for multi-resolution images
+        self._prefer_gradient_over_labels = False  # Toggle for color mode display
         # Set window icon
         current_dir = Path(__file__).parent.parent
         logo_svg_path = current_dir / "assets" / "logo.svg"
@@ -576,7 +721,12 @@ class MainWindow(QMainWindow):
         self.img_stack.addWidget(self.logo)
         self.img_stack.addWidget(self.image_viewer)
         main_layout.addWidget(self.img_stack, stretch=4)
-        self.channel_control = self.page1.channel_control_panel.inner_layout
+        self.channel_control = (
+            self.page1.channel_control_panel
+        )  # Use container for top-aligned addWidget
+        self.saturation_control = (
+            self.page1.saturation_panel
+        )  # Use the container for top-aligned addWidget
         self.page1.next_btn.clicked.connect(self.goto_second_page)
         self.page2.back_btn.clicked.connect(self.goto_first_page)
         self.page1.load_shapes_btn.clicked.connect(self.load_shapes)
@@ -586,9 +736,10 @@ class MainWindow(QMainWindow):
         self.page1.confirm_calibration_btn.clicked.connect(self.confirm_calibration)
         self.page1.add_channel_btn.clicked.connect(self.add_channel)
         self.page1.add_spatialdata_btn.clicked.connect(self.add_spatialdata)
-        self.page1.gamma_slider.valueChanged.connect(self.update_gamma)
-        self.page1.contrast_slider.valueChanged.connect(self.update_contrast)
-        self.page1.refresh_btn.clicked.connect(self.image_viewer.update_display)
+        self.page1.auto_saturation_checkbox.stateChanged.connect(
+            self.toggle_auto_saturation
+        )
+        self.page1.refresh_btn.clicked.connect(self.image_viewer.update_image_only)
         self.page1.reset_btn.clicked.connect(self.reset_view)
         self.page2.add_lnd_btn.clicked.connect(self.toggle_landmark_selection)
         self.page2.confirm_lnd_btn.clicked.connect(self.confirm_landmark)
@@ -650,6 +801,13 @@ class MainWindow(QMainWindow):
 
         file_menu.addSeparator()
 
+        self.action_screenshot = QAction("Save Screenshot...", self)
+        self.action_screenshot.setShortcut("Ctrl+Shift+S")
+        self.action_screenshot.triggered.connect(self.save_screenshot)
+        file_menu.addAction(self.action_screenshot)
+
+        file_menu.addSeparator()
+
         action_exit = QAction("Exit", self)
         action_exit.triggered.connect(self.close)
         file_menu.addAction(action_exit)
@@ -663,6 +821,27 @@ class MainWindow(QMainWindow):
         self.action_reset_view = QAction("Reset View", self)
         self.action_reset_view.triggered.connect(self.reset_view)
         view_menu.addAction(self.action_reset_view)
+
+        view_menu.addSeparator()
+
+        self.action_toggle_shapes = QAction("Show Shapes", self)
+        self.action_toggle_shapes.setCheckable(True)
+        self.action_toggle_shapes.setChecked(True)
+        self.action_toggle_shapes.setShortcut("Ctrl+Shift+L")
+        self.action_toggle_shapes.triggered.connect(self.toggle_shapes_visibility)
+        view_menu.addAction(self.action_toggle_shapes)
+
+        self.action_toggle_color_mode = QAction(
+            "Show Gradient (instead of Labels)", self
+        )
+        self.action_toggle_color_mode.setCheckable(True)
+        self.action_toggle_color_mode.setChecked(False)
+        self.action_toggle_color_mode.setShortcut("Ctrl+Shift+G")
+        self.action_toggle_color_mode.triggered.connect(self.toggle_color_mode)
+        self.action_toggle_color_mode.setEnabled(
+            False
+        )  # Disabled until both labels and landmarks are available
+        view_menu.addAction(self.action_toggle_color_mode)
 
         view_menu.addSeparator()
 
@@ -801,6 +980,117 @@ class MainWindow(QMainWindow):
             self, "About CellPick", "CellPick\n\nA spatial omics cell selection tool."
         )
 
+    def save_screenshot(self) -> None:
+        """Save a full-resolution screenshot of the visualization to a PNG file."""
+        # Check if there's anything to capture
+        if not self.image_viewer.channels:
+            QMessageBox.warning(
+                self,
+                "No Image",
+                "No image loaded to capture.",
+            )
+            return
+
+        # Prompt for save location
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Screenshot",
+            "cellpick_screenshot.png",
+            "PNG Images (*.png);;All Files (*)",
+        )
+
+        if not file_path:
+            return
+
+        # Ensure .png extension
+        if not file_path.lower().endswith(".png"):
+            file_path += ".png"
+
+        try:
+            # Get the graphics view and its visible area
+            graphics_view = self.image_viewer.graphics_view
+
+            # Get the visible scene rectangle (what's currently displayed)
+            visible_rect = graphics_view.mapToScene(
+                graphics_view.viewport().rect()
+            ).boundingRect()
+
+            # Get dimensions of the visible area
+            width = int(visible_rect.width())
+            height = int(visible_rect.height())
+
+            if width <= 0 or height <= 0:
+                QMessageBox.warning(
+                    self,
+                    "Screenshot Error",
+                    "Invalid viewport dimensions.",
+                )
+                return
+
+            # Create image with transparent background, then fill white
+            from PySide6.QtGui import QImage, QPainter
+
+            image = QImage(width, height, QImage.Format_ARGB32)
+            image.fill(Qt.white)
+
+            # Render only the visible portion of the scene to the image
+            painter = QPainter(image)
+            painter.setRenderHint(QPainter.Antialiasing)
+            painter.setRenderHint(QPainter.SmoothPixmapTransform)
+            graphics_view.scene.render(painter, source=visible_rect)
+            painter.end()
+
+            # Save the image
+            if image.save(file_path):
+                QMessageBox.information(
+                    self,
+                    "Screenshot Saved",
+                    f"Screenshot saved to:\n{file_path}\n\nSize: {width} x {height} pixels",
+                )
+            else:
+                QMessageBox.critical(
+                    self,
+                    "Screenshot Error",
+                    f"Failed to save screenshot to:\n{file_path}",
+                )
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Screenshot Error",
+                f"Error saving screenshot:\n{str(e)}",
+            )
+
+    def toggle_shapes_visibility(self) -> None:
+        """Toggle visibility of shape overlays."""
+        visible = self.action_toggle_shapes.isChecked()
+        self.image_viewer.set_shapes_visible(visible)
+
+    def toggle_color_mode(self) -> None:
+        """Toggle between showing labels and gradient colors for shapes."""
+        self._prefer_gradient_over_labels = self.action_toggle_color_mode.isChecked()
+        # Update the display to reflect the change
+        self.image_viewer.update_polygon_display()
+
+    def _update_color_mode_action(self) -> None:
+        """Update the color mode toggle action based on available data."""
+        # Check if both labels and landmarks (scores) are available
+        has_labels = (
+            self.state.cell_labels is not None
+            and self.state.label_colors is not None
+            and len(self.state.cell_labels) > 0
+        )
+        has_scores = len(self.state.landmarks) >= 2  # Scores require 2 landmarks
+
+        # Enable the toggle only if both are available
+        self.action_toggle_color_mode.setEnabled(has_labels and has_scores)
+
+        # Update the action text based on current state
+        if self._prefer_gradient_over_labels:
+            self.action_toggle_color_mode.setText("Show Labels (instead of Gradient)")
+        else:
+            self.action_toggle_color_mode.setText("Show Gradient (instead of Labels)")
+
     def _sync_menu_actions(self) -> None:
         """Sync menu action enabled states with corresponding buttons and current page."""
         # Determine which page is currently visible
@@ -888,12 +1178,55 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.page2)
         self._sync_menu_actions()
 
-    def update_gamma(self, value: int) -> None:
-        self.image_viewer.gamma = np.exp(value / 20.0)
+    def toggle_auto_saturation(self, state: int) -> None:
+        """Toggle auto-adjust saturation for all channels."""
+        if state:
+            self.apply_auto_saturation()
 
-    def update_contrast(self, value: int) -> None:
-        # Map slider value (-100 to 100) to contrast factor (0.5 to 2.0)
-        self.image_viewer.contrast = 1.0 + value / 100.0
+    def apply_auto_saturation(self) -> None:
+        """Apply automatic saturation to all channels based on percentiles."""
+        for idx, channel in enumerate(self.image_viewer.channels):
+            sat_min, sat_max = channel.compute_auto_saturation(1.0, 99.0)
+            channel.saturation_min = sat_min
+            channel.saturation_max = sat_max
+            channel.invalidate_cache()
+            # Update the corresponding slider widget
+            self._update_saturation_slider(idx, sat_min, sat_max)
+        self.image_viewer.update_image_only()
+
+    def _update_saturation_slider(
+        self, channel_idx: int, sat_min: float, sat_max: float
+    ) -> None:
+        """Update the range slider widget for a channel."""
+        # Find the slider widget in the saturation control layout
+        for i in range(self.saturation_control.inner_layout.count()):
+            item = self.saturation_control.inner_layout.itemAt(i)
+            widget = item.widget() if item else None
+            if (
+                widget
+                and hasattr(widget, "channel_idx")
+                and widget.channel_idx == channel_idx
+            ):
+                if hasattr(widget, "range_slider"):
+                    widget.range_slider.blockSignals(True)
+                    widget.range_slider.set_range(sat_min, sat_max)
+                    widget.range_slider.blockSignals(False)
+                break
+
+    def update_channel_saturation(
+        self, channel_idx: int, sat_min: float, sat_max: float
+    ) -> None:
+        """Update saturation for a specific channel (does not update display - user must click Refresh)."""
+        if 0 <= channel_idx < len(self.image_viewer.channels):
+            channel = self.image_viewer.channels[channel_idx]
+            channel.saturation_min = sat_min
+            channel.saturation_max = sat_max
+            channel.invalidate_cache()
+            # Uncheck auto-adjust when manually changing
+            self.page1.auto_saturation_checkbox.blockSignals(True)
+            self.page1.auto_saturation_checkbox.setChecked(False)
+            self.page1.auto_saturation_checkbox.blockSignals(False)
+            # Note: Display is NOT updated here - user must click Refresh
 
     def reset_view(self) -> None:
         factor = 1.0 / self.image_viewer.graphics_view.zoom_factor
@@ -933,9 +1266,9 @@ class MainWindow(QMainWindow):
         self.image_viewer.width = None
         self.channels = []
 
-        # Clear channel control panel widgets
-        while self.channel_control.count():
-            item = self.channel_control.takeAt(0)
+        # Clear channel control panel widgets (keep the stretch at the end)
+        while self.channel_control.inner_layout.count() > 1:
+            item = self.channel_control.inner_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -988,9 +1321,9 @@ class MainWindow(QMainWindow):
         self.image_viewer.width = None
         self.channels = []
 
-        # Clear channel control panel widgets
-        while self.channel_control.count():
-            item = self.channel_control.takeAt(0)
+        # Clear channel control panel widgets (keep the stretch at the end)
+        while self.channel_control.inner_layout.count() > 1:
+            item = self.channel_control.inner_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -1093,9 +1426,20 @@ class MainWindow(QMainWindow):
                     return
 
                 # Prompt user for channel color
+                from .components import CHANNEL_COLORS
+
+                default_color = CHANNEL_COLORS[
+                    len(self.image_viewer.channels) % len(CHANNEL_COLORS)
+                ]
                 color_dialog = QColorDialog(self)
                 color_dialog.setWindowTitle("Select Channel Color")
-                color_dialog.setCurrentColor(QColor(255, 255, 255))  # Default to white
+                color_dialog.setCurrentColor(
+                    QColor(
+                        int(default_color[0]),
+                        int(default_color[1]),
+                        int(default_color[2]),
+                    )
+                )
                 if color_dialog.exec() == QColorDialog.Accepted:
                     selected_color = color_dialog.currentColor()
                     custom_color = np.array(
@@ -1288,8 +1632,8 @@ class MainWindow(QMainWindow):
                     for i, (channel_data, channel_name) in enumerate(
                         zip(channels, channel_names)
                     ):
-                        # Use default white color for all channels
-                        custom_color = np.array([255, 255, 255])
+                        # Use default palette color based on channel index
+                        custom_color = None  # Let ImageChannel use CHANNEL_COLORS based on color_idx
 
                         error_id = self.image_viewer.add_channel(
                             channel_data, channel_name, custom_color
@@ -1339,22 +1683,16 @@ class MainWindow(QMainWindow):
                     for item in polygons:
                         if len(item) == 3:
                             points, label, original_id = item
-                            # Scale points to match loaded image resolution
+                            # Scale points using vectorized operation
                             if scale_factor > 1:
-                                points = [
-                                    QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                    for p in points
-                                ]
+                                points = rescale_points_vectorized(points, scale_factor)
                             polygon = Polygon(points, label, original_id=original_id)
                         else:
                             # Fallback for old format
                             points, label = item
-                            # Scale points to match loaded image resolution
+                            # Scale points using vectorized operation
                             if scale_factor > 1:
-                                points = [
-                                    QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                    for p in points
-                                ]
+                                points = rescale_points_vectorized(points, scale_factor)
                             polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
@@ -1373,12 +1711,9 @@ class MainWindow(QMainWindow):
                     self.state.reset_shapes()
                     scale_factor = self._spatialdata_scale_factor
                     for points, label in polygons:
-                        # Scale points to match loaded image resolution
+                        # Scale points using vectorized operation
                         if scale_factor > 1:
-                            points = [
-                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                for p in points
-                            ]
+                            points = rescale_points_vectorized(points, scale_factor)
                         polygon = Polygon(points, label)
                         self.state.shapes.append(polygon)
                     polygons_loaded = True
@@ -1403,16 +1738,12 @@ class MainWindow(QMainWindow):
                 # Load landmarks first (they don't affect other selections)
                 landmarks = loader.load_cellpick_landmarks()
                 if landmarks:
-                    # Scale landmark coordinates to match loaded image resolution
+                    # Scale landmark coordinates using vectorized operation
                     if scale_factor > 1:
-                        scaled_landmarks = []
-                        for lm_points in landmarks:
-                            scaled_lm = [
-                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                for p in lm_points
-                            ]
-                            scaled_landmarks.append(scaled_lm)
-                        landmarks = scaled_landmarks
+                        landmarks = [
+                            rescale_points_vectorized(lm_points, scale_factor)
+                            for lm_points in landmarks
+                        ]
                     self.state.landmarks = landmarks
                     # Add landmarks to visual display
                     for landmark_points in landmarks:
@@ -1426,16 +1757,12 @@ class MainWindow(QMainWindow):
                 # Load active regions (they determine which cells are active)
                 active_regions = loader.load_cellpick_active_regions()
                 if active_regions:
-                    # Scale active region coordinates to match loaded image resolution
+                    # Scale active region coordinates using vectorized operation
                     if scale_factor > 1:
-                        scaled_ars = []
-                        for ar_points in active_regions:
-                            scaled_ar = [
-                                QPointF(p.x() / scale_factor, p.y() / scale_factor)
-                                for p in ar_points
-                            ]
-                            scaled_ars.append(scaled_ar)
-                        active_regions = scaled_ars
+                        active_regions = [
+                            rescale_points_vectorized(ar_points, scale_factor)
+                            for ar_points in active_regions
+                        ]
                     self.state.active_regions = active_regions
                     # Add active regions to visual display
                     for ar_points in active_regions:
@@ -1512,6 +1839,9 @@ class MainWindow(QMainWindow):
                     annotations_loaded
                 )
 
+            # Update color mode toggle availability
+            self._update_color_mode_action()
+
             QMessageBox.information(self, "SpatialData Loaded", msg)
 
         except RuntimeError as e:
@@ -1535,6 +1865,8 @@ class MainWindow(QMainWindow):
     def add_channel_control(self, name: str, channel_idx: int) -> None:
         channel_widget = QWidget()
         channel_layout = QHBoxLayout(channel_widget)
+        channel_layout.setContentsMargins(2, 0, 2, 0)  # Reduce vertical margins
+        channel_layout.setSpacing(4)
 
         # Create clickable name label
         name_label = ClickableLabel(name)
@@ -1548,7 +1880,6 @@ class MainWindow(QMainWindow):
             lambda state, idx=channel_idx: self.toggle_channel(idx, state)
         )
         channel_layout.addWidget(cb)
-
         # Create clickable color label
         if (
             channel_idx < len(self.image_viewer.channels)
@@ -1573,6 +1904,50 @@ class MainWindow(QMainWindow):
         channel_layout.addWidget(remove_btn)
         self.channel_control.addWidget(channel_widget)
 
+        # Add saturation slider for this channel
+        self._add_saturation_control(name, channel_idx, color)
+
+    def _add_saturation_control(self, name: str, channel_idx: int, color) -> None:
+        """Add a saturation range slider for a channel."""
+        from .ui_components import RangeSlider
+
+        sat_widget = QWidget()
+        sat_layout = QHBoxLayout(sat_widget)
+        sat_layout.setContentsMargins(2, 0, 2, 0)
+        sat_layout.setSpacing(4)
+
+        # Color-coded channel name label (use black for light/white colors)
+        brightness = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
+        text_color = (
+            "#000000"
+            if brightness > 180
+            else f"rgb({color[0]}, {color[1]}, {color[2]})"
+        )
+        name_label = QLabel(f"{name}:")
+        name_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+        name_label.setFixedWidth(80)
+        sat_layout.addWidget(name_label)
+
+        # Range slider
+        range_slider = RangeSlider(color=tuple(color))
+        range_slider.rangeChanged.connect(
+            lambda min_v, max_v, idx=channel_idx: self.update_channel_saturation(
+                idx, min_v, max_v
+            )
+        )
+        sat_layout.addWidget(range_slider, stretch=1)
+
+        # Store references
+        sat_widget.channel_idx = channel_idx
+        sat_widget.range_slider = range_slider
+        sat_widget.name_label = name_label
+
+        self.saturation_control.addWidget(sat_widget)
+
+        # If auto-adjust is enabled, recompute saturation for ALL channels
+        if self.page1.auto_saturation_checkbox.isChecked():
+            self.apply_auto_saturation()
+
     def rename_channel(self, channel_idx: int) -> None:
         """Rename a channel by showing a text input dialog."""
         if 0 <= channel_idx < len(self.image_viewer.channels):
@@ -1585,12 +1960,19 @@ class MainWindow(QMainWindow):
             )
             if ok and new_name.strip():
                 self.image_viewer.channels[channel_idx].name = new_name.strip()
-                # Update the name label in the UI
-                for i in range(self.channel_control.count()):
-                    item = self.channel_control.itemAt(i)
-                    if item.widget() and hasattr(item.widget(), "channel_idx"):
+                # Update the name label in the channel control UI
+                for i in range(self.channel_control.inner_layout.count()):
+                    item = self.channel_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
                         if item.widget().channel_idx == channel_idx:
                             item.widget().name_label.setText(new_name.strip())
+                            break
+                # Update the name label in the saturation control UI
+                for i in range(self.saturation_control.inner_layout.count()):
+                    item = self.saturation_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
+                        if item.widget().channel_idx == channel_idx:
+                            item.widget().name_label.setText(f"{new_name.strip()}:")
                             break
 
     def change_channel_color(self, channel_idx: int) -> None:
@@ -1626,13 +2008,36 @@ class MainWindow(QMainWindow):
 
                 # Update the channel's custom color
                 channel.custom_color = new_color
+                channel.invalidate_cache()
 
                 # Update the color label in the UI
-                for i in range(self.channel_control.count()):
-                    item = self.channel_control.itemAt(i)
-                    if item.widget() and hasattr(item.widget(), "channel_idx"):
+                for i in range(self.channel_control.inner_layout.count()):
+                    item = self.channel_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
                         if item.widget().channel_idx == channel_idx:
                             item.widget().color_label.set_color(new_color)
+                            break
+
+                # Update the saturation slider color
+                for i in range(self.saturation_control.inner_layout.count()):
+                    item = self.saturation_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
+                        if item.widget().channel_idx == channel_idx:
+                            item.widget().range_slider.set_color(tuple(new_color))
+                            # Use black text for light colors
+                            brightness = (
+                                new_color[0] * 0.299
+                                + new_color[1] * 0.587
+                                + new_color[2] * 0.114
+                            )
+                            text_color = (
+                                "#000000"
+                                if brightness > 180
+                                else f"rgb({new_color[0]}, {new_color[1]}, {new_color[2]})"
+                            )
+                            item.widget().name_label.setStyleSheet(
+                                f"color: {text_color}; font-weight: bold;"
+                            )
                             break
 
                 # Update the display
@@ -1648,45 +2053,213 @@ class MainWindow(QMainWindow):
             self.state.to_home()
 
     def rebuild_channel_controls(self) -> None:
-        while self.channel_control.count():
-            item = self.channel_control.takeAt(0)
+        # Clear channel controls (keep the stretch at the end)
+        while self.channel_control.inner_layout.count() > 1:
+            item = self.channel_control.inner_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        # Clear saturation controls (keep the stretch at the end)
+        while self.saturation_control.inner_layout.count() > 1:
+            item = self.saturation_control.inner_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        # Rebuild both
         for idx, channel in enumerate(self.image_viewer.channels):
             self.add_channel_control(channel.name, idx)
 
     def toggle_channel(self, channel_idx: int, visible: bool) -> None:
         if 0 <= channel_idx < len(self.image_viewer.channels):
             self.image_viewer.channels[channel_idx].visible = visible
-            self.image_viewer.update_display()
+            # Use fast path: only update composite image, don't re-rasterize shapes
+            self.image_viewer.update_image_only()
 
     def load_shapes(self) -> None:
         if not self.image_viewer.channels:
             QMessageBox.warning(self, "Warning", "Please load an image first")
             return
 
-        xml_path, _ = QFileDialog.getOpenFileName(
-            self, "Open XML containing shapes", "", "XML Files (*.xml);;All Files (*)"
-        )
-        if not xml_path:
-            return
-        self.xml_path = xml_path
-
-        # Enable calibration buttons now that shapes are loaded
-        self.page1.load_calibration_btn.setEnabled(True)
-        self.page1.manual_calibration_btn.setEnabled(True)
-        self.page1.confirm_calibration_btn.setEnabled(True)
-
-        # Show informative message
-        QMessageBox.information(
+        file_path, _ = QFileDialog.getOpenFileName(
             self,
-            "Shapes Loaded",
-            "Shape file has been successfully loaded!\n\n"
-            "To display the shapes on the image, please calibrate using one of the following methods:\n\n"
-            "• Load Calibration File: Use an existing calibration metadata file\n"
-            "• Manual Calibration: Define three calibration points manually\n\n"
-            "After selecting your calibration method, click 'Calibrate' to proceed.",
+            "Open file containing shapes",
+            "",
+            "All Supported Files (*.xml *.tif *.tiff *.png);;XML Files (*.xml);;TIFF Files (*.tif *.tiff);;PNG Files (*.png);;All Files (*)",
         )
+        if not file_path:
+            return
+
+        file_ext = Path(file_path).suffix.lower()
+
+        # Check if this is an image file (label mask) or XML
+        if file_ext in (".tif", ".tiff", ".png"):
+            # Load as label mask image
+            self._load_shapes_from_label_image(file_path)
+        else:
+            # Load as XML (existing behavior)
+            self.xml_path = file_path
+
+            # Enable calibration buttons now that shapes are loaded
+            self.page1.load_calibration_btn.setEnabled(True)
+            self.page1.manual_calibration_btn.setEnabled(True)
+            self.page1.confirm_calibration_btn.setEnabled(True)
+
+            # Show informative message
+            QMessageBox.information(
+                self,
+                "Shapes Loaded",
+                "Shape file has been successfully loaded!\n\n"
+                "To display the shapes on the image, please calibrate using one of the following methods:\n\n"
+                "• Load Calibration File: Use an existing calibration metadata file\n"
+                "• Manual Calibration: Define three calibration points manually\n\n"
+                "After selecting your calibration method, click 'Calibrate' to proceed.",
+            )
+
+    def _load_shapes_from_label_image(self, file_path: str) -> None:
+        """Load shapes from a label mask image file."""
+        from .spatialdata_io import extract_polygons_from_label_image, SKIMAGE_AVAILABLE
+        from PIL import Image
+
+        if not SKIMAGE_AVAILABLE:
+            QMessageBox.critical(
+                self,
+                "Missing Dependency",
+                "scikit-image is required for loading label mask images.\n"
+                "Please install it with: pip install scikit-image",
+            )
+            return
+
+        try:
+            # Load the image based on file type
+            file_ext = Path(file_path).suffix.lower()
+            if file_ext in (".tif", ".tiff"):
+                label_array = tifimread(file_path)
+            else:
+                # Use PIL for PNG and other formats
+                label_array = np.array(Image.open(file_path))
+            label_array = np.squeeze(label_array)
+
+            if label_array.ndim != 2:
+                QMessageBox.warning(
+                    self,
+                    "Invalid Image",
+                    f"Expected a 2D label mask image, got shape {label_array.shape}.\n"
+                    "The image should have pixel values representing cell IDs (0 = background).",
+                )
+                return
+
+            # Show progress dialog
+            progress = QProgressDialog(
+                "Extracting polygons from label mask...", "Cancel", 0, 100, self
+            )
+            progress.setWindowModality(Qt.ApplicationModal)
+            progress.setValue(10)
+            QApplication.processEvents()
+
+            # Define progress callback
+            def update_progress(current, total):
+                if progress.wasCanceled():
+                    raise RuntimeError("Operation cancelled by user")
+                percent = 10 + int(80 * current / max(1, total))
+                progress.setValue(percent)
+                progress.setLabelText(
+                    f"Extracting polygons: {current}/{total} cells..."
+                )
+                QApplication.processEvents()
+
+            # Extract polygons
+            polygons = extract_polygons_from_label_image(
+                label_array,
+                min_area=10,
+                max_cells=100000,
+                progress_callback=update_progress,
+            )
+
+            if not polygons:
+                progress.close()
+                QMessageBox.warning(
+                    self,
+                    "No Shapes Found",
+                    "No valid shapes were found in the label mask image.",
+                )
+                return
+
+            progress.setLabelText("Adding shapes to viewer...")
+            progress.setValue(90)
+            QApplication.processEvents()
+
+            # Check if shapes need to be scaled to match current image
+            img_height = self.image_viewer.height
+            img_width = self.image_viewer.width
+            label_height, label_width = label_array.shape
+
+            scale_factor = 1.0
+            if img_height and img_width:
+                # Check if label mask dimensions differ from displayed image
+                height_ratio = label_height / img_height
+                width_ratio = label_width / img_width
+
+                # Use average ratio if they're close, otherwise warn
+                if abs(height_ratio - width_ratio) < 0.1:
+                    scale_factor = (height_ratio + width_ratio) / 2
+                elif height_ratio != 1.0 or width_ratio != 1.0:
+                    # Dimensions don't match proportionally
+                    reply = QMessageBox.question(
+                        self,
+                        "Dimension Mismatch",
+                        f"Label mask dimensions ({label_width}x{label_height}) differ from\n"
+                        f"displayed image dimensions ({img_width}x{img_height}).\n\n"
+                        f"Do you want to scale the shapes to fit the displayed image?",
+                        QMessageBox.Yes | QMessageBox.No,
+                        QMessageBox.Yes,
+                    )
+                    if reply == QMessageBox.Yes:
+                        scale_factor = height_ratio  # Use height ratio
+
+            # Reset and add shapes
+            self.state.reset_shapes()
+
+            from .components import Polygon, rescale_points_vectorized
+
+            for points, label, original_id in polygons:
+                # Scale points if needed
+                if scale_factor > 1.0:
+                    points = rescale_points_vectorized(points, scale_factor)
+                polygon = Polygon(points, label, original_id=original_id)
+                self.state.shapes.append(polygon)
+
+            # Update display
+            self.image_viewer.update_polygon_display()
+
+            # Create MockDVPXML for compatibility
+            self.im_xml = MockDVPXML(self.state.shapes)
+
+            # Clear xml_path since we loaded from image
+            self.xml_path = None
+
+            progress.setValue(100)
+            progress.close()
+
+            # Switch to advanced home state
+            if self.state.data_load_mode == DataLoadMode.NONE:
+                self.set_image_workflow_mode()
+            self.state.enable_advanced_home()
+
+            QMessageBox.information(
+                self,
+                "Shapes Loaded",
+                f"Successfully loaded {len(polygons)} shapes from label mask.\n\n"
+                f"You can now proceed with landmark and active region selection.",
+            )
+
+        except RuntimeError as e:
+            if "cancelled" in str(e).lower():
+                return
+            QMessageBox.warning(self, "Cancelled", "Shape loading was cancelled.")
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error Loading Shapes",
+                f"Failed to load shapes from label mask:\n{str(e)}",
+            )
 
     def load_calibration(self) -> None:
         assert self.state.data_load_mode == DataLoadMode.IMAGE
@@ -1914,6 +2487,7 @@ class MainWindow(QMainWindow):
             self.state.load_cell_labels(labels_dict)
             # Update label checkboxes in UI
             self.page2.update_label_checkboxes(self.state.label_colors)
+            self._update_color_mode_action()
             QMessageBox.information(
                 self,
                 "Success",
@@ -1923,6 +2497,7 @@ class MainWindow(QMainWindow):
         if delete_labels:
             self.state.clear_cell_labels()
             self.page2.update_label_checkboxes(self.state.label_colors)
+            self._update_color_mode_action()
 
     def reset_home_buttons(self) -> None:
         assert self.state.state == AppState.HOME
@@ -2008,6 +2583,7 @@ class MainWindow(QMainWindow):
     def confirm_landmark(self) -> None:
         self.state.confirm_landmark()
         self.page2.add_lnd_btn.setText("Add Landmark")
+        self._update_color_mode_action()
         self.reset_main_buttons()
 
     def delete_last_lnd_point(self) -> None:
@@ -2406,6 +2982,7 @@ class MainWindow(QMainWindow):
             if len(landmarks) == 2:
                 self.state.set_scores()
 
+            self._update_color_mode_action()
             self.reset_main_buttons()
 
         except Exception as e:
