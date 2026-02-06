@@ -1,5 +1,5 @@
-app
-===
+cellpick
+========
 
 .. toctree::
    :maxdepth: 4

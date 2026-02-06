@@ -33,6 +33,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.doctest",
     "sphinx_copybutton",
+    "sphinx_design",
 ]
 exclude_patterns = []
 
@@ -62,8 +63,10 @@ autodoc_mock_imports = [
     "lxml.etree",
     "scipy",
     "scipy.interpolate",
+    "scipy.ndimage",
     "tqdm",
     "skimage",
+    "skimage.measure",
     "shapely",
     "shapely.geometry",
     "czifile",
@@ -76,6 +79,12 @@ autodoc_mock_imports = [
     "PySide6.QtSvgWidgets",
     "qt_material",
     "imagecodecs",
+    "spatialdata",
+    "spatialdata.models",
+    "spatialdata.transformations",
+    "xarray",
+    "geopandas",
+    "anndata",
 ]  # type: ignore
 
 # -- Options for HTML output -------------------------------------------------
