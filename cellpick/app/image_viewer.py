@@ -1,36 +1,22 @@
-import sys
-from copy import deepcopy
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 import numpy as np
-import pandas as pd
-import skimage
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF, QBrush
 from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QFileDialog,
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsPolygonItem,
     QGraphicsScene,
     QGraphicsView,
-    QHBoxLayout,
-    QLabel,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QSlider,
     QVBoxLayout,
     QWidget,
 )
-from shapely.geometry import MultiPoint
 
 from .components import CHANNEL_COLORS, AppState, ImageChannel, Polygon
 from .ui_components import PolygonPreviewItem
 
+# Alpha values for shape rendering based on selection state
 ALPHA_BASE1 = 200
 ALPHA_BASE2 = 100
 ALPHA_ENABLED1 = 240
@@ -40,12 +26,38 @@ ALPHA_DISABLED2 = 50
 
 
 class ZoomableGraphicsView(QGraphicsView):
+    """
+    A QGraphicsView with mouse wheel zoom and pan functionality.
+
+    Provides smooth zooming centered on the mouse cursor and
+    pan navigation via drag mode.
+
+    Attributes
+    ----------
+    scene : QGraphicsScene
+        The graphics scene containing all items.
+    pixmap_item : Optional[QGraphicsPixmapItem]
+        The image pixmap item.
+    zoom_factor : float
+        Current zoom level (1.0 = fit to view).
+    max_zoom : float
+        Maximum allowed zoom factor.
+    """
+
     scene: QGraphicsScene
     pixmap_item: Optional[QGraphicsPixmapItem]
     zoom_factor: float
     max_zoom: float
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
+        """
+        Initialize the ZoomableGraphicsView.
+
+        Parameters
+        ----------
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.scene = QGraphicsScene(self)
         self.setScene(self.scene)
@@ -59,11 +71,20 @@ class ZoomableGraphicsView(QGraphicsView):
         self.setStyleSheet("background-color: black; border: none")
 
     def fit_in_view(self) -> None:
+        """Fit the image in the view and reset zoom factor."""
         if self.pixmap_item:
             self.fitInView(self.pixmap_item, Qt.KeepAspectRatio)
             self.zoom_factor = 1.0
 
     def set_image(self, qimage: QImage) -> None:
+        """
+        Set a new image and reset the view.
+
+        Parameters
+        ----------
+        qimage : QImage
+            The image to display.
+        """
         if self.pixmap_item:
             self.scene.removeItem(self.pixmap_item)
         pixmap = QPixmap.fromImage(qimage)
@@ -72,7 +93,14 @@ class ZoomableGraphicsView(QGraphicsView):
         self.fit_in_view()
 
     def update_image(self, qimage: QImage) -> None:
-        """Update the displayed image without changing zoom/pan."""
+        """
+        Update the displayed image without changing zoom/pan.
+
+        Parameters
+        ----------
+        qimage : QImage
+            The new image to display.
+        """
         if self.pixmap_item:
             pixmap = QPixmap.fromImage(qimage)
             self.pixmap_item.setPixmap(pixmap)
@@ -81,6 +109,7 @@ class ZoomableGraphicsView(QGraphicsView):
             self.set_image(qimage)
 
     def wheelEvent(self, event) -> None:
+        """Handle mouse wheel for zooming."""
         zoom_in_factor = 1.1
         zoom_out_factor = 1 / zoom_in_factor
         if event.angleDelta().y() > 0:
@@ -94,6 +123,35 @@ class ZoomableGraphicsView(QGraphicsView):
 
 
 class ImageViewer(QWidget):
+    """
+    Main image viewer widget with multichannel image display and shape overlays.
+
+    Combines a ZoomableGraphicsView with shape management for displaying
+    multichannel microscopy images with polygon overlays for cells,
+    landmarks, and active regions.
+
+    Attributes
+    ----------
+    state : Any
+        Reference to the AppStateManager.
+    channels : List[ImageChannel]
+        List of image channels.
+    composite_image : Optional[np.ndarray]
+        The current composite RGB image.
+    height : Optional[int]
+        Image height in pixels.
+    width : Optional[int]
+        Image width in pixels.
+    shape_items : List[QGraphicsPolygonItem]
+        Vector items for selected shapes.
+    landmark_items : List[QGraphicsPolygonItem]
+        Items for landmark polygons.
+    ar_items : List[QGraphicsPolygonItem]
+        Items for active region polygons.
+    graphics_view : ZoomableGraphicsView
+        The main graphics view widget.
+    """
+
     state: Any
     channels: List[ImageChannel]
     composite_image: Optional[np.ndarray]
@@ -112,6 +170,14 @@ class ImageViewer(QWidget):
     _shapes_visible: bool
 
     def __init__(self, state: Any) -> None:
+        """
+        Initialize the ImageViewer.
+
+        Parameters
+        ----------
+        state : Any
+            Reference to the AppStateManager.
+        """
         super().__init__()
         self.state = state
         self.state.image_viewer = self
@@ -136,7 +202,14 @@ class ImageViewer(QWidget):
         self.setMouseTracking(True)
 
     def get_pen_scale(self) -> float:
-        """Get the pen width scale factor based on spatialdata resolution level."""
+        """
+        Get the pen width scale factor based on spatialdata resolution level.
+
+        Returns
+        -------
+        float
+            Scale factor for pen width (0.25 to 1.0).
+        """
         main_window = self.parent()
         while main_window and not hasattr(main_window, "_spatialdata_scale_factor"):
             main_window = main_window.parent()
@@ -153,6 +226,23 @@ class ImageViewer(QWidget):
         name: str = "",
         custom_color: Optional[np.ndarray] = None,
     ) -> int:
+        """
+        Add a new image channel to the viewer.
+
+        Parameters
+        ----------
+        image_data : np.ndarray
+            2D or 3D array with image data.
+        name : str, optional
+            Channel name (default is "").
+        custom_color : Optional[np.ndarray], optional
+            Custom RGB color array (default is None).
+
+        Returns
+        -------
+        int
+            0 on success, 1 if invalid shape, 2 if dimension mismatch.
+        """
         if len(image_data.shape) not in (2, 3):
             return 1
         if len(image_data.shape) == 3:
@@ -169,10 +259,13 @@ class ImageViewer(QWidget):
         return 0
 
     def _update_composite_image(self, preserve_view: bool = False) -> None:
-        """Update just the composite image without touching shape overlays.
+        """
+        Update just the composite image without touching shape overlays.
 
-        Args:
-            preserve_view: If True, keep current zoom/pan. If False, reset to fit.
+        Parameters
+        ----------
+        preserve_view : bool, optional
+            If True, keep current zoom/pan. If False, reset to fit (default is False).
         """
         if not self.channels or self.height is None or self.width is None:
             return
@@ -203,7 +296,14 @@ class ImageViewer(QWidget):
         # Shape overlay and selected items are already in the scene with correct z-order
 
     def set_shapes_visible(self, visible: bool) -> None:
-        """Show or hide all shape overlays."""
+        """
+        Show or hide all shape overlays.
+
+        Parameters
+        ----------
+        visible : bool
+            Whether shapes should be visible.
+        """
         self._shapes_visible = visible
         # Update overlay visibility
         if self._shape_overlay_item:

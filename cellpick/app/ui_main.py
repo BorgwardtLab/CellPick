@@ -10,11 +10,8 @@ import numpy as np
 from scipy import interpolate
 import pandas as pd
 from czifile import imread as cziimread
-from pathlib import Path
 from PySide6.QtCore import (
-    QBuffer,
     QByteArray,
-    QIODevice,
     QObject,
     QPointF,
     QRectF,
@@ -29,7 +26,6 @@ from PySide6.QtGui import (
     QFont,
     QIcon,
     QImage,
-    QMouseEvent,
     QPainter,
     QPen,
     QPixmap,
@@ -45,10 +41,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QGraphicsPixmapItem,
-    QGraphicsPolygonItem,
-    QGraphicsScene,
-    QGraphicsView,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -123,9 +115,31 @@ if sys.platform == "darwin":
 
 
 class ScrollableContainer(QWidget):
+    """
+    A scrollable container widget with vertical layout.
+
+    Items are added from the top with a stretch at the bottom to
+    keep content aligned to the top of the container.
+
+    Attributes
+    ----------
+    inner_layout : QVBoxLayout
+        The layout where widgets are added.
+    """
+
     inner_layout: QVBoxLayout
 
     def __init__(self, height: int, parent: Optional[QWidget] = None) -> None:
+        """
+        Initialize the ScrollableContainer.
+
+        Parameters
+        ----------
+        height : int
+            Fixed height of the container.
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.setFixedHeight(height)
         layout = QVBoxLayout(self)
@@ -143,7 +157,14 @@ class ScrollableContainer(QWidget):
         layout.addWidget(scroll)
 
     def addWidget(self, widget: QWidget) -> None:
-        """Add widget before the stretch to keep items at top."""
+        """
+        Add a widget to the container.
+
+        Parameters
+        ----------
+        widget : QWidget
+            The widget to add. Inserted before the stretch to keep items at top.
+        """
         # Insert before the stretch (which is at the end)
         self.inner_layout.insertWidget(self.inner_layout.count() - 1, widget)
 
@@ -151,11 +172,31 @@ class ScrollableContainer(QWidget):
 class ResolutionSelectionDialog(QDialog):
     """
     Dialog for selecting image resolution level from a multiscale SpatialData image.
+
+    Displays available resolution levels with their dimensions and allows
+    user to select which one to load.
+
+    Attributes
+    ----------
+    selected_level : int
+        The selected resolution level index.
+    list_widget : QListWidget
+        The list widget showing resolution options.
     """
 
     def __init__(
         self, level_info: List[dict], parent: Optional[QWidget] = None
     ) -> None:
+        """
+        Initialize the ResolutionSelectionDialog.
+
+        Parameters
+        ----------
+        level_info : List[dict]
+            List of dicts with keys: 'level', 'width', 'height', 'channels', 'scale_factor'.
+        parent : Optional[QWidget], optional
+            Parent widget (default is None).
+        """
         super().__init__(parent)
         self.setWindowTitle("Select Image Resolution")
         self.setMinimumWidth(450)
@@ -209,7 +250,14 @@ class ResolutionSelectionDialog(QDialog):
         layout.addWidget(button_box)
 
     def get_selected_level(self) -> int:
-        """Return the selected resolution level."""
+        """
+        Return the selected resolution level.
+
+        Returns
+        -------
+        int
+            The selected level index (0-based).
+        """
         current_item = self.list_widget.currentItem()
         if current_item:
             return current_item.data(Qt.UserRole)
@@ -217,6 +265,30 @@ class ResolutionSelectionDialog(QDialog):
 
 
 class SelectionPage(QWidget):
+    """
+    First page of the main window for data loading and image adjustment.
+
+    Provides controls for loading channels, SpatialData, shapes,
+    and adjusting image display settings like saturation.
+
+    Attributes
+    ----------
+    channel_control_panel : ScrollableContainer
+        Panel for channel visibility controls.
+    saturation_panel : ScrollableContainer
+        Panel for per-channel saturation sliders.
+    add_channel_btn : AnimatedButton
+        Button to add image channels.
+    add_spatialdata_btn : AnimatedButton
+        Button to load SpatialData files.
+    load_shapes_btn : AnimatedButton
+        Button to load shape files.
+    auto_saturation_checkbox : QCheckBox
+        Checkbox for auto-adjusting saturation.
+    next_btn : AnimatedButton
+        Button to proceed to the next page.
+    """
+
     channel_control_panel: ScrollableContainer
     add_channel_btn: AnimatedButton
     add_spatialdata_btn: AnimatedButton
@@ -229,6 +301,7 @@ class SelectionPage(QWidget):
     buttons: List[Any]
 
     def __init__(self) -> None:
+        """Initialize the SelectionPage with all UI controls."""
         super().__init__()
         layout = QVBoxLayout(self)
         self.channel_control_panel = ScrollableContainer(height=120)
@@ -288,7 +361,8 @@ class SelectionPage(QWidget):
         self.buttons = self.findChildren(AnimatedButton)
         self.select_shape_color_btn.clicked.connect(self.pick_shape_color)
 
-    def pick_shape_color(self):
+    def pick_shape_color(self) -> None:
+        """Open a color dialog to select the shape outline color."""
         # Robustly find the MainWindow and use its shape_outline_color
         main_window = self.parent()
         while main_window and not hasattr(main_window, "shape_outline_color"):
@@ -305,6 +379,32 @@ class SelectionPage(QWidget):
 
 
 class ActionPage(QWidget):
+    """
+    Second page of the main window for shape selection and export.
+
+    Provides controls for landmarks, active regions, shape selection
+    algorithms, and exporting results.
+
+    Attributes
+    ----------
+    back_btn : AnimatedButton
+        Button to return to the first page.
+    add_lnd_btn : AnimatedButton
+        Button to add landmarks.
+    add_ar_btn : AnimatedButton
+        Button to add active regions.
+    select_shapes_btn : AnimatedButton
+        Button to run shape selection algorithm.
+    k_box : QSpinBox
+        Spinner for number of shapes to select.
+    clustering_type : QComboBox
+        Dropdown for selection algorithm type.
+    export_btn : AnimatedButton
+        Button to export selected shapes.
+    export_spatialdata_btn : AnimatedButton
+        Button to export to SpatialData format.
+    """
+
     back_btn: AnimatedButton
     add_lnd_btn: AnimatedButton
     delete_last_point_lnd_btn: AnimatedButton
@@ -329,6 +429,7 @@ class ActionPage(QWidget):
     buttons: List[Any]
 
     def __init__(self) -> None:
+        """Initialize the ActionPage with all UI controls."""
         super().__init__()
         layout = QVBoxLayout(self)
         button_panel1 = QGroupBox("Landmarks")
@@ -442,12 +543,16 @@ class ActionPage(QWidget):
         for checkbox in self.label_checkboxes.values():
             checkbox.deleteLater()
         self.label_checkboxes.clear()
-        for i in range(self.label_checkboxes_layout.count()):
-            self.label_checkboxes_layout.itemAt(i).widget().deleteLater()
+
+        # Clear layout items (but skip stretch items which don't have widgets)
+        while self.label_checkboxes_layout.count() > 1:  # Keep the stretch
+            item = self.label_checkboxes_layout.takeAt(0)
+            if item and item.widget():
+                item.widget().deleteLater()
 
         if labels is None:
-            # Remove "Select k per label" option to clustering type if present
-            if self.clustering_type.count() == 4:
+            # Remove "Select k per label" option if present (count > 3)
+            while self.clustering_type.count() > 3:
                 self.clustering_type.removeItem(3)
             return
 
@@ -476,7 +581,8 @@ class ActionPage(QWidget):
             h_layout.addStretch()
 
             self.label_checkboxes[label] = checkbox
-            self.label_checkboxes_layout.addWidget(container)
+            # Use the container's addWidget to insert before stretch
+            self.label_checkboxes_container.addWidget(container)
 
         # Add "Select k per label" option to clustering type if not already present
         if self.clustering_type.count() == 3:
@@ -516,6 +622,30 @@ class ActionPage(QWidget):
 
 
 class MainWindow(QMainWindow):
+    """
+    Main application window for CellPick.
+
+    Manages the overall application layout, state, and coordinates
+    between the selection page, action page, and image viewer.
+
+    Attributes
+    ----------
+    state : AppStateManager
+        The application state manager.
+    image_viewer : ImageViewer
+        The main image display widget.
+    page1 : SelectionPage
+        The data loading and image adjustment page.
+    page2 : ActionPage
+        The shape selection and export page.
+    stack : QStackedWidget
+        Widget stack for switching between pages.
+    scale : float
+        Current image scale factor.
+    shape_outline_color : QColor
+        Color used for shape outlines.
+    """
+
     channels: List[str]
     state: AppStateManager
     stack: QStackedWidget
@@ -532,6 +662,7 @@ class MainWindow(QMainWindow):
     xml_path, meta_path = None, None
 
     def __init__(self) -> None:
+        """Initialize the MainWindow with all UI components."""
         super().__init__()
         self.image_resolution = 25000
         self.channels: List[str] = []
