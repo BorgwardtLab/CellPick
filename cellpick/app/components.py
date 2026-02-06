@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, List, Optional
 import random
@@ -76,6 +76,14 @@ class ImageChannel:
         Index for the display color.
     custom_color : Optional[np.ndarray]
         Custom RGB color array. If provided, overrides color_idx.
+    _normalized_data : Optional[np.ndarray]
+        Cached normalized (0-1) version of image_data.
+    _processed_rgb : Optional[np.ndarray]
+        Cached RGB contribution after gamma/contrast, ready to sum.
+    _cache_gamma : float
+        Gamma value used when cache was computed.
+    _cache_contrast : float
+        Contrast value used when cache was computed.
     """
 
     image_data: np.ndarray
@@ -83,6 +91,61 @@ class ImageChannel:
     visible: bool = True
     color_idx: int = 0
     custom_color: Optional[np.ndarray] = None
+    _normalized_data: Optional[np.ndarray] = field(default=None, repr=False)
+    _processed_rgb: Optional[np.ndarray] = field(default=None, repr=False)
+    _cache_gamma: float = field(default=-1.0, repr=False)
+    _cache_contrast: float = field(default=-1.0, repr=False)
+
+    def get_normalized(self) -> np.ndarray:
+        """Get normalized (0-1) channel data, computing and caching if needed."""
+        if self._normalized_data is None:
+            data = self.image_data.astype(np.float32)
+            max_val = np.max(data)
+            if max_val > 0:
+                data /= max_val
+            self._normalized_data = data
+        return self._normalized_data
+
+    def get_processed_rgb(self, gamma: float, contrast: float) -> np.ndarray:
+        """Get the RGB contribution for this channel, using cache if valid."""
+        # Check if cache is valid
+        if (
+            self._processed_rgb is not None
+            and abs(self._cache_gamma - gamma) < 1e-9
+            and abs(self._cache_contrast - contrast) < 1e-9
+        ):
+            return self._processed_rgb
+
+        # Recompute
+        import skimage.exposure
+
+        channel_data = self.get_normalized().copy()
+
+        if abs(gamma - 1.0) > 1e-9:
+            channel_data = skimage.exposure.adjust_gamma(channel_data, 1.0 / gamma)
+
+        # Apply contrast
+        channel_data = np.clip((channel_data - 0.5) * contrast + 0.5, 0, 1)
+
+        # Apply color
+        if self.custom_color is not None:
+            color = self.custom_color
+        else:
+            color = CHANNEL_COLORS[self.color_idx % len(CHANNEL_COLORS)]
+
+        # Pre-multiply with color to get RGB contribution
+        self._processed_rgb = channel_data[..., None] * color[None, None, :]
+        self._cache_gamma = gamma
+        self._cache_contrast = contrast
+
+        return self._processed_rgb
+
+    def invalidate_cache(self) -> None:
+        """Invalidate all caches (call when image_data changes)."""
+        self._normalized_data = None
+        self._processed_rgb = None
+        self._cache_gamma = -1.0
+        self._cache_contrast = -1.0
 
 
 class Polygon:

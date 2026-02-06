@@ -681,12 +681,19 @@ class MainWindow(QMainWindow):
 
         view_menu.addSeparator()
 
+        self.action_toggle_shapes = QAction("Show Shapes", self)
+        self.action_toggle_shapes.setCheckable(True)
+        self.action_toggle_shapes.setChecked(True)
+        self.action_toggle_shapes.setShortcut("Ctrl+Shift+L")
+        self.action_toggle_shapes.triggered.connect(self.toggle_shapes_visibility)
+        view_menu.addAction(self.action_toggle_shapes)
+
         self.action_toggle_color_mode = QAction(
             "Show Gradient (instead of Labels)", self
         )
         self.action_toggle_color_mode.setCheckable(True)
         self.action_toggle_color_mode.setChecked(False)
-        self.action_toggle_color_mode.setShortcut("Ctrl+Shift+Space")
+        self.action_toggle_color_mode.setShortcut("Ctrl+Shift+G")
         self.action_toggle_color_mode.triggered.connect(self.toggle_color_mode)
         self.action_toggle_color_mode.setEnabled(
             False
@@ -910,6 +917,11 @@ class MainWindow(QMainWindow):
                 "Screenshot Error",
                 f"Error saving screenshot:\n{str(e)}",
             )
+
+    def toggle_shapes_visibility(self) -> None:
+        """Toggle visibility of shape overlays."""
+        visible = self.action_toggle_shapes.isChecked()
+        self.image_viewer.set_shapes_visible(visible)
 
     def toggle_color_mode(self) -> None:
         """Toggle between showing labels and gradient colors for shapes."""
@@ -1779,7 +1791,8 @@ class MainWindow(QMainWindow):
     def toggle_channel(self, channel_idx: int, visible: bool) -> None:
         if 0 <= channel_idx < len(self.image_viewer.channels):
             self.image_viewer.channels[channel_idx].visible = visible
-            self.image_viewer.update_display()
+            # Use fast path: only update composite image, don't re-rasterize shapes
+            self.image_viewer.update_image_only()
 
     def load_shapes(self) -> None:
         if not self.image_viewer.channels:
