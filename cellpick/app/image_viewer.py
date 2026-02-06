@@ -180,8 +180,8 @@ class ImageViewer(QWidget):
         composite = np.zeros((self.height, self.width, 3), dtype=np.float32)
         for channel in self.channels:
             if channel.visible:
-                # Use cached processed RGB data (fast path when gamma/contrast unchanged)
-                composite += channel.get_processed_rgb(self.gamma, self.contrast)
+                # Use cached processed RGB data (fast path when saturation unchanged)
+                composite += channel.get_processed_rgb()
         composite = np.clip(composite, 0, 255).astype(np.uint8)
         self.composite_image = composite
         h, w, _ = composite.shape

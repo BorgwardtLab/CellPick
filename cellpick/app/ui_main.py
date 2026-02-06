@@ -134,12 +134,18 @@ class ScrollableContainer(QWidget):
         scroll.setWidgetResizable(True)
         content = QWidget()
         self.inner_layout = QVBoxLayout(content)
-        self.inner_layout.setSpacing(0)  # Reduce spacing between items
+        self.inner_layout.setSpacing(2)  # Small spacing between items
         self.inner_layout.setContentsMargins(0, 0, 0, 0)  # Reduce margins
+        self.inner_layout.addStretch()  # Push items to top
         content.setStyleSheet("background-color: white;")
         scroll.setStyleSheet("background-color: white; border: none")
         scroll.setWidget(content)
         layout.addWidget(scroll)
+
+    def addWidget(self, widget: QWidget) -> None:
+        """Add widget before the stretch to keep items at top."""
+        # Insert before the stretch (which is at the end)
+        self.inner_layout.insertWidget(self.inner_layout.count() - 1, widget)
 
 
 class ResolutionSelectionDialog(QDialog):
@@ -215,7 +221,8 @@ class SelectionPage(QWidget):
     add_channel_btn: AnimatedButton
     add_spatialdata_btn: AnimatedButton
     load_shapes_btn: AnimatedButton
-    gamma_slider: QSlider
+    auto_saturation_checkbox: QCheckBox
+    saturation_panel: ScrollableContainer
     refresh_btn: AnimatedButton
     reset_btn: AnimatedButton
     next_btn: AnimatedButton
@@ -239,12 +246,15 @@ class SelectionPage(QWidget):
         self.manual_calibration_btn = AnimatedButton("Manual", size=(30, 96))
         self.confirm_calibration_btn = AnimatedButton("Calibrate")
         self.select_shape_color_btn = AnimatedButton("Select shape color")
-        self.gamma_slider = QSlider(Qt.Horizontal)
-        self.gamma_slider.setRange(-100, 100)
-        self.gamma_slider.setValue(0)
-        self.contrast_slider = QSlider(Qt.Horizontal)
-        self.contrast_slider.setRange(-100, 100)
-        self.contrast_slider.setValue(0)
+
+        # Auto-adjust saturation checkbox
+        self.auto_saturation_checkbox = QCheckBox("Auto-adjust saturation")
+        self.auto_saturation_checkbox.setChecked(True)
+        self.auto_saturation_checkbox.setStyleSheet("color: #333333;")
+
+        # Per-channel saturation sliders container
+        self.saturation_panel = ScrollableContainer(height=100)
+
         self.refresh_btn = AnimatedButton("Refresh")
         self.reset_btn = AnimatedButton("Reset view")
         self.next_btn = AnimatedButton(
@@ -255,10 +265,8 @@ class SelectionPage(QWidget):
         button_layout1.addWidget(self.channel_control_panel)
         button_layout1.addWidget(self.load_shapes_btn)
         button_layout1.addWidget(self.load_labels_btn)
-        button_layout2.addWidget(QLabel("Brightness"))
-        button_layout2.addWidget(self.gamma_slider)
-        button_layout2.addWidget(QLabel("Contrast"))
-        button_layout2.addWidget(self.contrast_slider)
+        button_layout2.addWidget(self.auto_saturation_checkbox)
+        button_layout2.addWidget(self.saturation_panel)
         button_layout2.addWidget(self.refresh_btn)
         button_layout2.addWidget(self.select_shape_color_btn)
 
@@ -278,8 +286,6 @@ class SelectionPage(QWidget):
         layout.addItem(QSpacerItem(0, 0, QSizePolicy.Minimum, QSizePolicy.Expanding))
         layout.addWidget(self.next_btn)
         self.buttons = self.findChildren(AnimatedButton)
-        self.buttons.append(self.gamma_slider)
-        self.buttons.append(self.contrast_slider)
         self.select_shape_color_btn.clicked.connect(self.pick_shape_color)
 
     def pick_shape_color(self):
@@ -585,6 +591,9 @@ class MainWindow(QMainWindow):
         self.img_stack.addWidget(self.image_viewer)
         main_layout.addWidget(self.img_stack, stretch=4)
         self.channel_control = self.page1.channel_control_panel.inner_layout
+        self.saturation_control = (
+            self.page1.saturation_panel
+        )  # Use the container for top-aligned addWidget
         self.page1.next_btn.clicked.connect(self.goto_second_page)
         self.page2.back_btn.clicked.connect(self.goto_first_page)
         self.page1.load_shapes_btn.clicked.connect(self.load_shapes)
@@ -594,9 +603,10 @@ class MainWindow(QMainWindow):
         self.page1.confirm_calibration_btn.clicked.connect(self.confirm_calibration)
         self.page1.add_channel_btn.clicked.connect(self.add_channel)
         self.page1.add_spatialdata_btn.clicked.connect(self.add_spatialdata)
-        self.page1.gamma_slider.valueChanged.connect(self.update_gamma)
-        self.page1.contrast_slider.valueChanged.connect(self.update_contrast)
-        self.page1.refresh_btn.clicked.connect(self.image_viewer.update_display)
+        self.page1.auto_saturation_checkbox.stateChanged.connect(
+            self.toggle_auto_saturation
+        )
+        self.page1.refresh_btn.clicked.connect(self.image_viewer.update_image_only)
         self.page1.reset_btn.clicked.connect(self.reset_view)
         self.page2.add_lnd_btn.clicked.connect(self.toggle_landmark_selection)
         self.page2.confirm_lnd_btn.clicked.connect(self.confirm_landmark)
@@ -1035,12 +1045,55 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.page2)
         self._sync_menu_actions()
 
-    def update_gamma(self, value: int) -> None:
-        self.image_viewer.gamma = np.exp(value / 20.0)
+    def toggle_auto_saturation(self, state: int) -> None:
+        """Toggle auto-adjust saturation for all channels."""
+        if state:
+            self.apply_auto_saturation()
 
-    def update_contrast(self, value: int) -> None:
-        # Map slider value (-100 to 100) to contrast factor (0.5 to 2.0)
-        self.image_viewer.contrast = 1.0 + value / 100.0
+    def apply_auto_saturation(self) -> None:
+        """Apply automatic saturation to all channels based on percentiles."""
+        for idx, channel in enumerate(self.image_viewer.channels):
+            sat_min, sat_max = channel.compute_auto_saturation(1.0, 99.0)
+            channel.saturation_min = sat_min
+            channel.saturation_max = sat_max
+            channel.invalidate_cache()
+            # Update the corresponding slider widget
+            self._update_saturation_slider(idx, sat_min, sat_max)
+        self.image_viewer.update_image_only()
+
+    def _update_saturation_slider(
+        self, channel_idx: int, sat_min: float, sat_max: float
+    ) -> None:
+        """Update the range slider widget for a channel."""
+        # Find the slider widget in the saturation control layout
+        for i in range(self.saturation_control.inner_layout.count()):
+            item = self.saturation_control.inner_layout.itemAt(i)
+            widget = item.widget() if item else None
+            if (
+                widget
+                and hasattr(widget, "channel_idx")
+                and widget.channel_idx == channel_idx
+            ):
+                if hasattr(widget, "range_slider"):
+                    widget.range_slider.blockSignals(True)
+                    widget.range_slider.set_range(sat_min, sat_max)
+                    widget.range_slider.blockSignals(False)
+                break
+
+    def update_channel_saturation(
+        self, channel_idx: int, sat_min: float, sat_max: float
+    ) -> None:
+        """Update saturation for a specific channel (does not update display - user must click Refresh)."""
+        if 0 <= channel_idx < len(self.image_viewer.channels):
+            channel = self.image_viewer.channels[channel_idx]
+            channel.saturation_min = sat_min
+            channel.saturation_max = sat_max
+            channel.invalidate_cache()
+            # Uncheck auto-adjust when manually changing
+            self.page1.auto_saturation_checkbox.blockSignals(True)
+            self.page1.auto_saturation_checkbox.setChecked(False)
+            self.page1.auto_saturation_checkbox.blockSignals(False)
+            # Note: Display is NOT updated here - user must click Refresh
 
     def reset_view(self) -> None:
         factor = 1.0 / self.image_viewer.graphics_view.zoom_factor
@@ -1668,6 +1721,8 @@ class MainWindow(QMainWindow):
     def add_channel_control(self, name: str, channel_idx: int) -> None:
         channel_widget = QWidget()
         channel_layout = QHBoxLayout(channel_widget)
+        channel_layout.setContentsMargins(2, 0, 2, 0)  # Reduce vertical margins
+        channel_layout.setSpacing(4)
 
         # Create clickable name label
         name_label = ClickableLabel(name)
@@ -1681,7 +1736,6 @@ class MainWindow(QMainWindow):
             lambda state, idx=channel_idx: self.toggle_channel(idx, state)
         )
         channel_layout.addWidget(cb)
-
         # Create clickable color label
         if (
             channel_idx < len(self.image_viewer.channels)
@@ -1706,6 +1760,50 @@ class MainWindow(QMainWindow):
         channel_layout.addWidget(remove_btn)
         self.channel_control.addWidget(channel_widget)
 
+        # Add saturation slider for this channel
+        self._add_saturation_control(name, channel_idx, color)
+
+    def _add_saturation_control(self, name: str, channel_idx: int, color) -> None:
+        """Add a saturation range slider for a channel."""
+        from .ui_components import RangeSlider
+
+        sat_widget = QWidget()
+        sat_layout = QHBoxLayout(sat_widget)
+        sat_layout.setContentsMargins(2, 0, 2, 0)
+        sat_layout.setSpacing(4)
+
+        # Color-coded channel name label (use black for light/white colors)
+        brightness = color[0] * 0.299 + color[1] * 0.587 + color[2] * 0.114
+        text_color = (
+            "#000000"
+            if brightness > 180
+            else f"rgb({color[0]}, {color[1]}, {color[2]})"
+        )
+        name_label = QLabel(f"{name}:")
+        name_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+        name_label.setFixedWidth(80)
+        sat_layout.addWidget(name_label)
+
+        # Range slider
+        range_slider = RangeSlider(color=tuple(color))
+        range_slider.rangeChanged.connect(
+            lambda min_v, max_v, idx=channel_idx: self.update_channel_saturation(
+                idx, min_v, max_v
+            )
+        )
+        sat_layout.addWidget(range_slider, stretch=1)
+
+        # Store references
+        sat_widget.channel_idx = channel_idx
+        sat_widget.range_slider = range_slider
+        sat_widget.name_label = name_label
+
+        self.saturation_control.addWidget(sat_widget)
+
+        # If auto-adjust is enabled, recompute saturation for ALL channels
+        if self.page1.auto_saturation_checkbox.isChecked():
+            self.apply_auto_saturation()
+
     def rename_channel(self, channel_idx: int) -> None:
         """Rename a channel by showing a text input dialog."""
         if 0 <= channel_idx < len(self.image_viewer.channels):
@@ -1718,12 +1816,19 @@ class MainWindow(QMainWindow):
             )
             if ok and new_name.strip():
                 self.image_viewer.channels[channel_idx].name = new_name.strip()
-                # Update the name label in the UI
+                # Update the name label in the channel control UI
                 for i in range(self.channel_control.count()):
                     item = self.channel_control.itemAt(i)
                     if item.widget() and hasattr(item.widget(), "channel_idx"):
                         if item.widget().channel_idx == channel_idx:
                             item.widget().name_label.setText(new_name.strip())
+                            break
+                # Update the name label in the saturation control UI
+                for i in range(self.saturation_control.inner_layout.count()):
+                    item = self.saturation_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
+                        if item.widget().channel_idx == channel_idx:
+                            item.widget().name_label.setText(f"{new_name.strip()}:")
                             break
 
     def change_channel_color(self, channel_idx: int) -> None:
@@ -1759,6 +1864,7 @@ class MainWindow(QMainWindow):
 
                 # Update the channel's custom color
                 channel.custom_color = new_color
+                channel.invalidate_cache()
 
                 # Update the color label in the UI
                 for i in range(self.channel_control.count()):
@@ -1766,6 +1872,28 @@ class MainWindow(QMainWindow):
                     if item.widget() and hasattr(item.widget(), "channel_idx"):
                         if item.widget().channel_idx == channel_idx:
                             item.widget().color_label.set_color(new_color)
+                            break
+
+                # Update the saturation slider color
+                for i in range(self.saturation_control.inner_layout.count()):
+                    item = self.saturation_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
+                        if item.widget().channel_idx == channel_idx:
+                            item.widget().range_slider.set_color(tuple(new_color))
+                            # Use black text for light colors
+                            brightness = (
+                                new_color[0] * 0.299
+                                + new_color[1] * 0.587
+                                + new_color[2] * 0.114
+                            )
+                            text_color = (
+                                "#000000"
+                                if brightness > 180
+                                else f"rgb({new_color[0]}, {new_color[1]}, {new_color[2]})"
+                            )
+                            item.widget().name_label.setStyleSheet(
+                                f"color: {text_color}; font-weight: bold;"
+                            )
                             break
 
                 # Update the display
@@ -1781,10 +1909,17 @@ class MainWindow(QMainWindow):
             self.state.to_home()
 
     def rebuild_channel_controls(self) -> None:
+        # Clear channel controls
         while self.channel_control.count():
             item = self.channel_control.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        # Clear saturation controls (keep the stretch at the end)
+        while self.saturation_control.inner_layout.count() > 1:
+            item = self.saturation_control.inner_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        # Rebuild both
         for idx, channel in enumerate(self.image_viewer.channels):
             self.add_channel_control(channel.name, idx)
 

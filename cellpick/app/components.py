@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import Any, List, Optional
+from typing import Any, List, Optional, Tuple
 import random
 
 import numpy as np
@@ -76,14 +76,20 @@ class ImageChannel:
         Index for the display color.
     custom_color : Optional[np.ndarray]
         Custom RGB color array. If provided, overrides color_idx.
-    _normalized_data : Optional[np.ndarray]
-        Cached normalized (0-1) version of image_data.
+    saturation_min : float
+        Minimum saturation level (0-1 scale, maps to percentile of image).
+    saturation_max : float
+        Maximum saturation level (0-1 scale, maps to percentile of image).
+    _raw_min : Optional[float]
+        Cached minimum value of raw image data.
+    _raw_max : Optional[float]
+        Cached maximum value of raw image data.
     _processed_rgb : Optional[np.ndarray]
-        Cached RGB contribution after gamma/contrast, ready to sum.
-    _cache_gamma : float
-        Gamma value used when cache was computed.
-    _cache_contrast : float
-        Contrast value used when cache was computed.
+        Cached RGB contribution after saturation adjustment, ready to sum.
+    _cache_sat_min : float
+        Saturation min value used when cache was computed.
+    _cache_sat_max : float
+        Saturation max value used when cache was computed.
     """
 
     image_data: np.ndarray
@@ -91,41 +97,71 @@ class ImageChannel:
     visible: bool = True
     color_idx: int = 0
     custom_color: Optional[np.ndarray] = None
-    _normalized_data: Optional[np.ndarray] = field(default=None, repr=False)
+    saturation_min: float = field(default=0.0, repr=False)
+    saturation_max: float = field(default=1.0, repr=False)
+    _raw_min: Optional[float] = field(default=None, repr=False)
+    _raw_max: Optional[float] = field(default=None, repr=False)
     _processed_rgb: Optional[np.ndarray] = field(default=None, repr=False)
-    _cache_gamma: float = field(default=-1.0, repr=False)
-    _cache_contrast: float = field(default=-1.0, repr=False)
+    _cache_sat_min: float = field(default=-1.0, repr=False)
+    _cache_sat_max: float = field(default=-1.0, repr=False)
 
-    def get_normalized(self) -> np.ndarray:
-        """Get normalized (0-1) channel data, computing and caching if needed."""
-        if self._normalized_data is None:
-            data = self.image_data.astype(np.float32)
-            max_val = np.max(data)
-            if max_val > 0:
-                data /= max_val
-            self._normalized_data = data
-        return self._normalized_data
+    def get_raw_range(self) -> Tuple[float, float]:
+        """Get (min, max) of raw image data, computing and caching if needed."""
+        if self._raw_min is None or self._raw_max is None:
+            self._raw_min = float(np.min(self.image_data))
+            self._raw_max = float(np.max(self.image_data))
+        return self._raw_min, self._raw_max
 
-    def get_processed_rgb(self, gamma: float, contrast: float) -> np.ndarray:
+    def compute_auto_saturation(
+        self, percentile_low: float = 1.0, percentile_high: float = 99.0
+    ) -> Tuple[float, float]:
+        """
+        Compute automatic saturation values based on percentiles.
+        Returns (sat_min, sat_max) in 0-1 scale.
+        """
+        raw_min, raw_max = self.get_raw_range()
+        raw_range = raw_max - raw_min
+
+        if raw_range < 1e-6:
+            return 0.0, 1.0
+
+        # Compute percentiles on the raw data
+        p_low = np.percentile(self.image_data, percentile_low)
+        p_high = np.percentile(self.image_data, percentile_high)
+
+        # Convert to 0-1 scale relative to data range
+        sat_min = (p_low - raw_min) / raw_range
+        sat_max = (p_high - raw_min) / raw_range
+
+        return float(np.clip(sat_min, 0, 1)), float(np.clip(sat_max, 0, 1))
+
+    def get_processed_rgb(self) -> np.ndarray:
         """Get the RGB contribution for this channel, using cache if valid."""
         # Check if cache is valid
         if (
             self._processed_rgb is not None
-            and abs(self._cache_gamma - gamma) < 1e-9
-            and abs(self._cache_contrast - contrast) < 1e-9
+            and abs(self._cache_sat_min - self.saturation_min) < 1e-9
+            and abs(self._cache_sat_max - self.saturation_max) < 1e-9
         ):
             return self._processed_rgb
 
         # Recompute
-        import skimage.exposure
+        raw_min, raw_max = self.get_raw_range()
+        raw_range = raw_max - raw_min
 
-        channel_data = self.get_normalized().copy()
+        if raw_range < 1e-6:
+            # Constant image
+            channel_data = np.zeros_like(self.image_data, dtype=np.float32)
+        else:
+            # Normalize to 0-1 based on raw range
+            channel_data = (self.image_data.astype(np.float32) - raw_min) / raw_range
 
-        if abs(gamma - 1.0) > 1e-9:
-            channel_data = skimage.exposure.adjust_gamma(channel_data, 1.0 / gamma)
-
-        # Apply contrast
-        channel_data = np.clip((channel_data - 0.5) * contrast + 0.5, 0, 1)
+            # Apply saturation windowing: remap sat_min-sat_max to 0-1
+            sat_range = self.saturation_max - self.saturation_min
+            if sat_range < 1e-6:
+                sat_range = 1e-6
+            channel_data = (channel_data - self.saturation_min) / sat_range
+            channel_data = np.clip(channel_data, 0, 1)
 
         # Apply color
         if self.custom_color is not None:
@@ -133,19 +169,20 @@ class ImageChannel:
         else:
             color = CHANNEL_COLORS[self.color_idx % len(CHANNEL_COLORS)]
 
-        # Pre-multiply with color to get RGB contribution
+        # Pre-multiply with color to get RGB contribution (scale to 0-255)
         self._processed_rgb = channel_data[..., None] * color[None, None, :]
-        self._cache_gamma = gamma
-        self._cache_contrast = contrast
+        self._cache_sat_min = self.saturation_min
+        self._cache_sat_max = self.saturation_max
 
         return self._processed_rgb
 
     def invalidate_cache(self) -> None:
-        """Invalidate all caches (call when image_data changes)."""
-        self._normalized_data = None
+        """Invalidate all caches (call when image_data or color changes)."""
+        self._raw_min = None
+        self._raw_max = None
         self._processed_rgb = None
-        self._cache_gamma = -1.0
-        self._cache_contrast = -1.0
+        self._cache_sat_min = -1.0
+        self._cache_sat_max = -1.0
 
 
 class Polygon:

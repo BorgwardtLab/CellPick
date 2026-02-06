@@ -18,6 +18,8 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QPolygonF,
+    QBrush,
+    QLinearGradient,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -33,7 +35,174 @@ from PySide6.QtWidgets import (
     QPushButton,
     QVBoxLayout,
     QWidget,
+    QHBoxLayout,
+    QSlider,
+    QStyleOptionSlider,
+    QStyle,
 )
+import numpy as np
+
+
+class RangeSlider(QWidget):
+    """
+    A dual-handle range slider for min/max value selection.
+    Mimics the Cellpose saturation slider style.
+    """
+
+    rangeChanged = Signal(float, float)  # Emits (min_val, max_val) as floats 0-1
+
+    def __init__(
+        self,
+        color: Tuple[int, int, int] = (100, 100, 255),
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.color = color
+        self._min_val = 0.0  # 0-1 range
+        self._max_val = 1.0  # 0-1 range
+        self._dragging = None  # 'min', 'max', or None
+        self._handle_width = 8
+        self._track_height = 6
+        self.setMinimumHeight(20)
+        self.setMinimumWidth(100)
+        self.setCursor(Qt.PointingHandCursor)
+
+    @property
+    def min_val(self) -> float:
+        return self._min_val
+
+    @property
+    def max_val(self) -> float:
+        return self._max_val
+
+    def set_range(self, min_val: float, max_val: float) -> None:
+        """Set the range values (0-1 scale)."""
+        self._min_val = max(0.0, min(1.0, min_val))
+        self._max_val = max(0.0, min(1.0, max_val))
+        if self._min_val > self._max_val:
+            self._min_val, self._max_val = self._max_val, self._min_val
+        self.update()
+
+    def _val_to_x(self, val: float) -> int:
+        """Convert value (0-1) to x coordinate."""
+        usable_width = self.width() - 2 * self._handle_width
+        return int(self._handle_width + val * usable_width)
+
+    def _x_to_val(self, x: int) -> float:
+        """Convert x coordinate to value (0-1)."""
+        usable_width = self.width() - 2 * self._handle_width
+        val = (x - self._handle_width) / usable_width
+        return max(0.0, min(1.0, val))
+
+    def set_color(self, color: Tuple[int, int, int]) -> None:
+        """Update the slider color."""
+        self.color = color
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        h = self.height()
+        track_y = (h - self._track_height) // 2
+
+        # Draw background track (dark)
+        painter.setBrush(QBrush(QColor(40, 40, 40)))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(
+            self._handle_width,
+            track_y,
+            self.width() - 2 * self._handle_width,
+            self._track_height,
+            self._track_height // 2,
+            self._track_height // 2,
+        )
+
+        # Draw active range (colored)
+        min_x = self._val_to_x(self._min_val)
+        max_x = self._val_to_x(self._max_val)
+
+        # Create gradient for the active range
+        gradient = QLinearGradient(min_x, 0, max_x, 0)
+        base_color = QColor(self.color[0], self.color[1], self.color[2])
+        gradient.setColorAt(0, base_color.darker(120))
+        gradient.setColorAt(1, base_color)
+
+        painter.setBrush(QBrush(gradient))
+        painter.drawRoundedRect(
+            min_x,
+            track_y,
+            max_x - min_x,
+            self._track_height,
+            self._track_height // 2,
+            self._track_height // 2,
+        )
+
+        # Draw handles
+        handle_h = h - 4
+        handle_y = 2
+
+        # Min handle
+        painter.setBrush(QBrush(QColor(60, 60, 60)))
+        painter.setPen(QPen(QColor(200, 200, 200), 1))
+        painter.drawRoundedRect(
+            min_x - self._handle_width // 2,
+            handle_y,
+            self._handle_width,
+            handle_h,
+            2,
+            2,
+        )
+
+        # Max handle
+        painter.drawRoundedRect(
+            max_x - self._handle_width // 2,
+            handle_y,
+            self._handle_width,
+            handle_h,
+            2,
+            2,
+        )
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:
+        if event.button() == Qt.LeftButton:
+            x = event.pos().x()
+            min_x = self._val_to_x(self._min_val)
+            max_x = self._val_to_x(self._max_val)
+
+            # Check which handle is closer
+            dist_min = abs(x - min_x)
+            dist_max = abs(x - max_x)
+
+            if dist_min <= dist_max and dist_min < self._handle_width * 2:
+                self._dragging = "min"
+            elif dist_max < self._handle_width * 2:
+                self._dragging = "max"
+            else:
+                # Click in middle - move nearest handle
+                if dist_min < dist_max:
+                    self._dragging = "min"
+                else:
+                    self._dragging = "max"
+                self._update_value(x)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:
+        if self._dragging:
+            self._update_value(event.pos().x())
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:
+        self._dragging = None
+
+    def _update_value(self, x: int) -> None:
+        val = self._x_to_val(x)
+
+        if self._dragging == "min":
+            self._min_val = min(val, self._max_val - 0.01)
+        elif self._dragging == "max":
+            self._max_val = max(val, self._min_val + 0.01)
+
+        self.update()
+        self.rangeChanged.emit(self._min_val, self._max_val)
 
 
 class AnimatedButton(QPushButton):
