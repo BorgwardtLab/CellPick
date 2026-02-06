@@ -590,7 +590,9 @@ class MainWindow(QMainWindow):
         self.img_stack.addWidget(self.logo)
         self.img_stack.addWidget(self.image_viewer)
         main_layout.addWidget(self.img_stack, stretch=4)
-        self.channel_control = self.page1.channel_control_panel.inner_layout
+        self.channel_control = (
+            self.page1.channel_control_panel
+        )  # Use container for top-aligned addWidget
         self.saturation_control = (
             self.page1.saturation_panel
         )  # Use the container for top-aligned addWidget
@@ -1133,9 +1135,9 @@ class MainWindow(QMainWindow):
         self.image_viewer.width = None
         self.channels = []
 
-        # Clear channel control panel widgets
-        while self.channel_control.count():
-            item = self.channel_control.takeAt(0)
+        # Clear channel control panel widgets (keep the stretch at the end)
+        while self.channel_control.inner_layout.count() > 1:
+            item = self.channel_control.inner_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -1188,9 +1190,9 @@ class MainWindow(QMainWindow):
         self.image_viewer.width = None
         self.channels = []
 
-        # Clear channel control panel widgets
-        while self.channel_control.count():
-            item = self.channel_control.takeAt(0)
+        # Clear channel control panel widgets (keep the stretch at the end)
+        while self.channel_control.inner_layout.count() > 1:
+            item = self.channel_control.inner_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
@@ -1293,9 +1295,20 @@ class MainWindow(QMainWindow):
                     return
 
                 # Prompt user for channel color
+                from .components import CHANNEL_COLORS
+
+                default_color = CHANNEL_COLORS[
+                    len(self.image_viewer.channels) % len(CHANNEL_COLORS)
+                ]
                 color_dialog = QColorDialog(self)
                 color_dialog.setWindowTitle("Select Channel Color")
-                color_dialog.setCurrentColor(QColor(255, 255, 255))  # Default to white
+                color_dialog.setCurrentColor(
+                    QColor(
+                        int(default_color[0]),
+                        int(default_color[1]),
+                        int(default_color[2]),
+                    )
+                )
                 if color_dialog.exec() == QColorDialog.Accepted:
                     selected_color = color_dialog.currentColor()
                     custom_color = np.array(
@@ -1488,8 +1501,8 @@ class MainWindow(QMainWindow):
                     for i, (channel_data, channel_name) in enumerate(
                         zip(channels, channel_names)
                     ):
-                        # Use default white color for all channels
-                        custom_color = np.array([255, 255, 255])
+                        # Use default palette color based on channel index
+                        custom_color = None  # Let ImageChannel use CHANNEL_COLORS based on color_idx
 
                         error_id = self.image_viewer.add_channel(
                             channel_data, channel_name, custom_color
@@ -1817,9 +1830,9 @@ class MainWindow(QMainWindow):
             if ok and new_name.strip():
                 self.image_viewer.channels[channel_idx].name = new_name.strip()
                 # Update the name label in the channel control UI
-                for i in range(self.channel_control.count()):
-                    item = self.channel_control.itemAt(i)
-                    if item.widget() and hasattr(item.widget(), "channel_idx"):
+                for i in range(self.channel_control.inner_layout.count()):
+                    item = self.channel_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
                         if item.widget().channel_idx == channel_idx:
                             item.widget().name_label.setText(new_name.strip())
                             break
@@ -1867,9 +1880,9 @@ class MainWindow(QMainWindow):
                 channel.invalidate_cache()
 
                 # Update the color label in the UI
-                for i in range(self.channel_control.count()):
-                    item = self.channel_control.itemAt(i)
-                    if item.widget() and hasattr(item.widget(), "channel_idx"):
+                for i in range(self.channel_control.inner_layout.count()):
+                    item = self.channel_control.inner_layout.itemAt(i)
+                    if item and item.widget() and hasattr(item.widget(), "channel_idx"):
                         if item.widget().channel_idx == channel_idx:
                             item.widget().color_label.set_color(new_color)
                             break
@@ -1909,9 +1922,9 @@ class MainWindow(QMainWindow):
             self.state.to_home()
 
     def rebuild_channel_controls(self) -> None:
-        # Clear channel controls
-        while self.channel_control.count():
-            item = self.channel_control.takeAt(0)
+        # Clear channel controls (keep the stretch at the end)
+        while self.channel_control.inner_layout.count() > 1:
+            item = self.channel_control.inner_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         # Clear saturation controls (keep the stretch at the end)

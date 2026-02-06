@@ -56,7 +56,7 @@ class ZoomableGraphicsView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorUnderMouse)
         self.zoom_factor: float = 1.0
         self.max_zoom: float = 100.0
-        self.setStyleSheet("background-color: white; border: none")
+        self.setStyleSheet("background-color: black; border: none")
 
     def fit_in_view(self) -> None:
         if self.pixmap_item:

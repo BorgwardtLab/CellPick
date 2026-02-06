@@ -17,10 +17,15 @@ from .algorithms import (
     polygon_mindist,
 )
 
+# Default channel colors optimized for fluorescence microscopy on black background
+# Inspired by DAPI, FITC, TRITC, Cy5 conventions + high contrast colors
 CHANNEL_COLORS = [
-    np.array([255, 255, 255]),
-    np.array([100, 255, 100]),
-    np.array([100, 100, 255]),
+    np.array([70, 130, 255]),  # Blue (DAPI/nuclei style)
+    np.array([0, 255, 100]),  # Green (FITC style)
+    np.array([255, 70, 70]),  # Red (TRITC style)
+    np.array([255, 0, 255]),  # Magenta (Cy5 style)
+    np.array([0, 255, 255]),  # Cyan
+    np.array([255, 255, 0]),  # Yellow
 ]
 
 
