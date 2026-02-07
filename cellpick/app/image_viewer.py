@@ -525,8 +525,97 @@ class ImageViewer(QWidget):
             poly_item.setBrush(fill_color)
             poly_item.setZValue(3)  # Above overlay
             poly_item.setVisible(self._shapes_visible)
+            poly_item.setData(0, idx)  # Store shape index for fast lookup
             self.graphics_view.scene.addItem(poly_item)
             self.shape_items.append(poly_item)
+
+    def update_single_shape_selection(self, shape_idx: int, selected: bool) -> None:
+        """
+        Fast update for a single shape's selection state.
+
+        Instead of re-rasterizing all shapes, this method only updates the
+        vector item for the given shape. When deselecting, the item is kept
+        but restyled to look like a non-selected shape (so it remains visible
+        and can be re-selected).
+
+        Parameters
+        ----------
+        shape_idx : int
+            Index of the shape to update.
+        selected : bool
+            True if the shape is being selected, False if being deselected.
+        """
+        if shape_idx >= len(self.state.shapes):
+            return
+
+        polygon = self.state.shapes[shape_idx]
+
+        # Get configuration from main window
+        main_window = self.parent()
+        while main_window and not hasattr(main_window, "shape_outline_color"):
+            main_window = main_window.parent()
+
+        if main_window and hasattr(main_window, "shape_outline_color"):
+            shape_outline_color = main_window.shape_outline_color
+        else:
+            shape_outline_color = QColor(0, 255, 0)
+
+        # Get scale factor for pen width
+        scale_factor = 1
+        if main_window and hasattr(main_window, "_spatialdata_scale_factor"):
+            scale_factor = main_window._spatialdata_scale_factor
+        pen_scale = max(0.25, min(1.0, 1.0 / (scale_factor**0.3)))
+
+        # Check label settings
+        labels_available = (
+            self.state.cell_labels is not None and self.state.label_colors is not None
+        )
+        prefer_gradient = False
+        if main_window and hasattr(main_window, "_prefer_gradient_over_labels"):
+            prefer_gradient = main_window._prefer_gradient_over_labels
+        use_label_colors = labels_available and not prefer_gradient
+
+        # Check if there are still selected shapes (for dimming calculation)
+        has_selected_shapes = len(self.state.selected_shape_ids) > 0
+
+        color, fill_color, base_pen_width = self._get_shape_color(
+            shape_idx,
+            polygon,
+            shape_outline_color,
+            use_label_colors,
+            has_selected_shapes=has_selected_shapes,
+        )
+        pen_width = max(0.5, base_pen_width * pen_scale)
+
+        # Check if we already have a vector item for this shape
+        existing_item = None
+        for item in self.shape_items:
+            if item.data(0) == shape_idx:
+                existing_item = item
+                break
+
+        if selected:
+            if existing_item:
+                # Update existing vector item to selected style
+                existing_item.setPen(QPen(color, pen_width))
+                existing_item.setBrush(fill_color)
+                existing_item.setZValue(3)  # Above overlay
+            else:
+                # Add a new vector item for the selected shape
+                poly_item = QGraphicsPolygonItem(polygon.get_qpolygon())
+                poly_item.setPen(QPen(color, pen_width))
+                poly_item.setBrush(fill_color)
+                poly_item.setZValue(3)  # Above overlay
+                poly_item.setVisible(self._shapes_visible)
+                poly_item.setData(0, shape_idx)  # Store shape index for fast lookup
+                self.graphics_view.scene.addItem(poly_item)
+                self.shape_items.append(poly_item)
+        else:
+            if existing_item:
+                # Restyle existing item as non-selected (keep it visible)
+                existing_item.setPen(QPen(color, pen_width))
+                existing_item.setBrush(fill_color)
+                existing_item.setZValue(2)  # Same level as overlay
 
     def mousePressEvent(self, event: Any) -> None:
         if event.button() == Qt.RightButton:

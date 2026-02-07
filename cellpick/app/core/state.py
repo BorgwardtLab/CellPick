@@ -367,19 +367,32 @@ class AppStateManager:
                 return
 
     def filter_by_ar(self) -> None:
-        """Filter shapes by active regions and update the display."""
+        """Filter shapes by active regions and update the display.
+
+        A shape is considered inside an AR if its centroid OR any of its
+        vertices are inside the AR polygon. This ensures boundary cells
+        are correctly included.
+        """
         self.active_shape_ids = []
         for i in range(len(self.shapes)):
-            c = self.shapes[i].centroid()
+            shape = self.shapes[i]
             is_contained = False
             for ar in self.active_regions:
-                poly = QPolygonF(ar)
-                if poly.containsPoint(c, Qt.OddEvenFill):
+                ar_poly = QPolygonF(ar)
+                # First check centroid (fast path for most shapes)
+                if ar_poly.containsPoint(shape.centroid(), Qt.OddEvenFill):
                     is_contained = True
+                    break
+                # For boundary cells: check if any vertex is inside the AR
+                for pt in shape.points:
+                    if ar_poly.containsPoint(pt, Qt.OddEvenFill):
+                        is_contained = True
+                        break
+                if is_contained:
                     break
             if is_contained:
                 self.active_shape_ids.append(i)
-        self.selected_shape_ids = self.active_shape_ids
+        self.selected_shape_ids = list(self.active_shape_ids)
         self.image_viewer.update_polygon_display()
 
     def update_active_shapes(self) -> None:
@@ -464,12 +477,20 @@ class AppStateManager:
             point_ids = [[] for _ in self.active_regions]
             polys = [[] for _ in self.active_regions]
             for i in active_ids_for_selection:
-                p = self.shapes[i].centroid()
+                shape = self.shapes[i]
                 is_contained = -1
                 for j, ar in enumerate(self.active_regions):
-                    poly = QPolygonF(ar)
-                    if poly.containsPoint(p, Qt.OddEvenFill):
+                    ar_poly = QPolygonF(ar)
+                    # Check centroid first
+                    if ar_poly.containsPoint(shape.centroid(), Qt.OddEvenFill):
                         is_contained = j
+                        break
+                    # Check vertices for boundary cells
+                    for pt in shape.points:
+                        if ar_poly.containsPoint(pt, Qt.OddEvenFill):
+                            is_contained = j
+                            break
+                    if is_contained >= 0:
                         break
                 assert is_contained >= 0
                 point_ids[is_contained].append(i)
@@ -524,11 +545,14 @@ class AppStateManager:
         scene_pos : QPointF
             The position to check for shape addition.
         """
+        # Only allow adding shapes that are within active regions
         for idx in self.active_shape_ids:
             poly = self.shapes[idx].get_qpolygon()
             if poly.containsPoint(scene_pos, Qt.OddEvenFill):
-                self.selected_shape_ids.append(idx)
-                self.image_viewer.update_polygon_display()
+                # Only add if not already selected
+                if idx not in self.selected_shape_ids:
+                    self.selected_shape_ids.append(idx)
+                    self.image_viewer.update_single_shape_selection(idx, selected=True)
                 return
 
     def try_deleting_shp(self, scene_pos: QPointF) -> None:
@@ -544,7 +568,7 @@ class AppStateManager:
             poly = self.shapes[idx].get_qpolygon()
             if poly.containsPoint(scene_pos, Qt.OddEvenFill):
                 self.selected_shape_ids.pop(i)
-                self.image_viewer.update_polygon_display()
+                self.image_viewer.update_single_shape_selection(idx, selected=False)
                 return
 
     def set_scores(self) -> None:
