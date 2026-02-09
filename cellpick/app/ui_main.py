@@ -2932,7 +2932,8 @@ class MainWindow(QMainWindow):
         for idx in selected_indices:
             shape = self.state.shapes[idx]
             score = shape.score if hasattr(shape, "score") else None
-            data.append({"CellID": idx + 1, "Score": score})
+            ar_idx = shape.ar_idx
+            data.append({"CellID": idx + 1, "Score": score, "AR": ar_idx})
         df = pd.DataFrame(data)
         df.to_csv(csv_path, index=False)
 

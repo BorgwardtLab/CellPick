@@ -6,6 +6,7 @@ and utility functions for coordinate transformations.
 """
 
 from typing import List, Optional
+import math
 
 import numpy as np
 from PySide6.QtCore import QPointF
@@ -70,6 +71,7 @@ class Polygon:
     score: Optional[float]
     color: QColor
     original_id: Optional[int]
+    ar_idx: int
 
     def __init__(
         self, points: List[QPointF], label: str = "", original_id: Optional[int] = None
@@ -92,6 +94,7 @@ class Polygon:
         self.color = QColor(255, 0, 255)
         self.original_id = original_id
         self._cached_qpolygon: Optional[QPolygonF] = None
+        self.ar_idx = None
 
     def get_qpolygon(self) -> QPolygonF:
         """

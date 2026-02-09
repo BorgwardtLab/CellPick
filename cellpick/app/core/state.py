@@ -377,21 +377,25 @@ class AppStateManager:
         for i in range(len(self.shapes)):
             shape = self.shapes[i]
             is_contained = False
-            for ar in self.active_regions:
+            for ar_idx, ar in enumerate(self.active_regions):
                 ar_poly = QPolygonF(ar)
                 # First check centroid (fast path for most shapes)
                 if ar_poly.containsPoint(shape.centroid(), Qt.OddEvenFill):
                     is_contained = True
+                    self.shapes[i].ar_idx = ar_idx
                     break
                 # For boundary cells: check if any vertex is inside the AR
                 for pt in shape.points:
                     if ar_poly.containsPoint(pt, Qt.OddEvenFill):
                         is_contained = True
+                        self.shapes[i].ar_idx = ar_idx
                         break
                 if is_contained:
                     break
             if is_contained:
                 self.active_shape_ids.append(i)
+            else: 
+                self.shapes[i].ar_idx = None
         self.selected_shape_ids = list(self.active_shape_ids)
         self.image_viewer.update_polygon_display()
 
