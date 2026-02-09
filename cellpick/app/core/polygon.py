@@ -120,7 +120,7 @@ class Polygon:
         If no score is set, uses magenta. Otherwise, uses a
         gradient from red (low score) to green (high score).
         """
-        if not self.score:
+        if (not isinstance(self.score, float)) or (not math.isfinite(self.score)):
             self.color = QColor(255, 0, 255)
             return
         green = int(255 * self.score)
