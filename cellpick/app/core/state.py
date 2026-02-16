@@ -394,7 +394,7 @@ class AppStateManager:
                     break
             if is_contained:
                 self.active_shape_ids.append(i)
-            else: 
+            else:
                 self.shapes[i].ar_idx = None
         self.selected_shape_ids = list(self.active_shape_ids)
         self.image_viewer.update_polygon_display()

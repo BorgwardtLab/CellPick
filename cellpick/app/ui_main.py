@@ -1,5 +1,6 @@
 import math
 import os
+import re
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -1410,20 +1411,37 @@ class MainWindow(QMainWindow):
                 image_data = image_data[::inv_scale, ::inv_scale, :].copy()
                 # image_data = image_data.reshape(new_shape[0], inv_scale, new_shape[1], inv_scale, c).mean(axis=(1, 3))
 
+            # Regex pattern for validating channel names
+            valid_name_pattern = re.compile(r"^[a-zA-Z0-9_.\-]+$")
+
             for chan_id in range(image_data.shape[-1]):
-                # Prompt user for channel name
+                # Prompt user for channel name with validation loop
                 default_name = file_path.split("/")[-1]
-                channel_name, ok = QInputDialog.getText(
-                    self,
-                    "Channel Name",
-                    "Enter a name for this channel:",
-                    text=default_name,
-                )
-                if not ok:
-                    return  # User cancelled the dialog
-                if not channel_name.strip():
-                    QMessageBox.warning(self, "Error", "Channel name cannot be empty")
-                    return
+
+                while True:
+                    channel_name, ok = QInputDialog.getText(
+                        self,
+                        "Channel Name",
+                        "Enter a name for this channel:",
+                        text=default_name,
+                    )
+                    if not ok:
+                        return  # User cancelled the dialog
+                    if not channel_name.strip():
+                        QMessageBox.warning(
+                            self, "Error", "Channel name cannot be empty"
+                        )
+                        continue
+                    if not valid_name_pattern.match(channel_name.strip()):
+                        QMessageBox.warning(
+                            self,
+                            "Invalid Channel Name",
+                            "Channel name can only contain alphanumeric characters, "
+                            "underscores (_), dots (.) and hyphens (-).",
+                        )
+                        continue
+                    channel_name = channel_name.strip()
+                    break
 
                 # Prompt user for channel color
                 from .components import CHANNEL_COLORS
