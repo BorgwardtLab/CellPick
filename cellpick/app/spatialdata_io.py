@@ -927,6 +927,32 @@ class SpatialDataLoader:
         labels = self.get_available_labels()
         return any(name.startswith("cellpick_") for name in labels)
 
+    def get_cellpick_annotation_shape(self) -> Optional[Tuple[int, int]]:
+        """
+        Get the dimensions of CellPick annotation label images.
+
+        Returns the shape of the first found CellPick annotation label
+        (landmarks, AR, or selected_cells), which should all be at the same resolution.
+
+        Returns
+        -------
+        Optional[Tuple[int, int]]
+            (height, width) of the annotation labels, or None if no annotations found.
+        """
+        for label_name in [
+            "cellpick_landmarks",
+            "cellpick_AR",
+            "cellpick_selected_cells",
+        ]:
+            if label_name in self.get_available_labels():
+                labels = self.sdata.labels[label_name]
+                label_data = (
+                    labels.compute() if hasattr(labels, "compute") else labels.values
+                )
+                label_array = np.squeeze(np.asarray(label_data))
+                return label_array.shape
+        return None
+
     def load_cellpick_selected_cells(
         self, all_cell_polygons: List[Tuple[List[Any], str]]
     ) -> List[int]:

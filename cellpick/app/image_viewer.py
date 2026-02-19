@@ -168,6 +168,7 @@ class ImageViewer(QWidget):
     # Hybrid rendering: rasterized overlay for non-selected shapes
     _shape_overlay_item: Optional[QGraphicsPixmapItem]
     _shapes_visible: bool
+    _abstract_view_enabled: bool
 
     def __init__(self, state: Any) -> None:
         """
@@ -196,6 +197,7 @@ class ImageViewer(QWidget):
         # Hybrid rendering state
         self._shape_overlay_item: Optional[QGraphicsPixmapItem] = None
         self._shapes_visible: bool = True
+        self._abstract_view_enabled: bool = False
         layout = QVBoxLayout(self)
         self.graphics_view = ZoomableGraphicsView()
         layout.addWidget(self.graphics_view)
@@ -270,12 +272,24 @@ class ImageViewer(QWidget):
         if not self.channels or self.height is None or self.width is None:
             return
 
+        # Build channel composite
         composite = np.zeros((self.height, self.width, 3), dtype=np.float32)
         for channel in self.channels:
             if channel.visible:
                 # Use cached processed RGB data (fast path when saturation unchanged)
                 composite += channel.get_processed_rgb()
         composite = np.clip(composite, 0, 255).astype(np.uint8)
+
+        # In abstract view, blend channels faintly over light beige background
+        if self._abstract_view_enabled:
+            background = np.full(
+                (self.height, self.width, 3), [245, 243, 240], dtype=np.float32
+            )
+            alpha = 0.15  # Faint channel visibility
+            composite = (
+                background * (1 - alpha) + composite.astype(np.float32) * alpha
+            ).astype(np.uint8)
+
         self.composite_image = composite
         h, w, _ = composite.shape
         bytes_per_line = 3 * w
@@ -311,6 +325,23 @@ class ImageViewer(QWidget):
         # Update selected shape items visibility
         for item in self.shape_items:
             item.setVisible(visible)
+
+    def set_abstract_view(self, enabled: bool) -> None:
+        """
+        Toggle abstract view mode with light beige background.
+
+        When enabled, hides all image channels and shows a light beige background,
+        keeping only shapes, active regions, and landmarks visible for
+        clear visualization of selections. Unselected shapes appear fainter.
+
+        Parameters
+        ----------
+        enabled : bool
+            Whether abstract view should be enabled.
+        """
+        self._abstract_view_enabled = enabled
+        self._update_composite_image(preserve_view=True)
+        self.update_polygon_display()  # Re-render shapes with adjusted opacity
 
     def _get_shape_color(
         self,
@@ -390,6 +421,11 @@ class ImageViewer(QWidget):
                 fill_color.setGreen(min(255, fill_color.green() + 50))
                 fill_color.setBlue(min(255, fill_color.blue() + 50))
                 base_pen_width = 2
+
+        # Make unselected shapes fainter in abstract view mode
+        if self._abstract_view_enabled and not is_selected:
+            color.setAlpha(max(30, color.alpha() // 3))
+            fill_color.setAlpha(max(15, fill_color.alpha() // 3))
 
         return color, fill_color, base_pen_width
 

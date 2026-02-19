@@ -676,6 +676,9 @@ class MainWindow(QMainWindow):
         self._loaded_spatialdata_path = None
         self._spatialdata_scale_factor = 1  # Track scaling for multi-resolution images
         self._prefer_gradient_over_labels = False  # Toggle for color mode display
+        self._abstract_view_enabled = (
+            False  # Toggle for abstract view (white background)
+        )
         # Set window icon
         current_dir = Path(__file__).parent.parent
         logo_svg_path = current_dir / "assets" / "logo.svg"
@@ -843,6 +846,13 @@ class MainWindow(QMainWindow):
             False
         )  # Disabled until both labels and landmarks are available
         view_menu.addAction(self.action_toggle_color_mode)
+
+        self.action_toggle_abstract_view = QAction("Abstract View", self)
+        self.action_toggle_abstract_view.setCheckable(True)
+        self.action_toggle_abstract_view.setChecked(False)
+        self.action_toggle_abstract_view.setShortcut("Ctrl+Shift+U")
+        self.action_toggle_abstract_view.triggered.connect(self.toggle_abstract_view)
+        view_menu.addAction(self.action_toggle_abstract_view)
 
         view_menu.addSeparator()
 
@@ -1072,6 +1082,11 @@ class MainWindow(QMainWindow):
         self._prefer_gradient_over_labels = self.action_toggle_color_mode.isChecked()
         # Update the display to reflect the change
         self.image_viewer.update_polygon_display()
+
+    def toggle_abstract_view(self) -> None:
+        """Toggle abstract view mode showing white background with shapes, ARs, and landmarks."""
+        self._abstract_view_enabled = self.action_toggle_abstract_view.isChecked()
+        self.image_viewer.set_abstract_view(self._abstract_view_enabled)
 
     def _update_color_mode_action(self) -> None:
         """Update the color mode toggle action based on available data."""
@@ -1750,16 +1765,27 @@ class MainWindow(QMainWindow):
                 progress.setValue(90)
                 QApplication.processEvents()
 
-                # Get scale factor for coordinate scaling
-                scale_factor = self._spatialdata_scale_factor
+                # Compute scale factor based on annotation label dimensions vs display dimensions
+                # This handles cases where annotation labels may have been exported at different resolutions
+                annotation_scale_factor = 1
+                annotation_shape = loader.get_cellpick_annotation_shape()
+                if annotation_shape and self.image_viewer.channels:
+                    display_shape = self.image_viewer.channels[0].image_data.shape
+                    # Use the larger dimension to compute scale (they should be proportional)
+                    annotation_scale_factor = max(
+                        annotation_shape[0] / display_shape[0],
+                        annotation_shape[1] / display_shape[1],
+                    )
 
                 # Load landmarks first (they don't affect other selections)
                 landmarks = loader.load_cellpick_landmarks()
                 if landmarks:
                     # Scale landmark coordinates using vectorized operation
-                    if scale_factor > 1:
+                    if annotation_scale_factor > 1:
                         landmarks = [
-                            rescale_points_vectorized(lm_points, scale_factor)
+                            rescale_points_vectorized(
+                                lm_points, annotation_scale_factor
+                            )
                             for lm_points in landmarks
                         ]
                     self.state.landmarks = landmarks
@@ -1776,9 +1802,11 @@ class MainWindow(QMainWindow):
                 active_regions = loader.load_cellpick_active_regions()
                 if active_regions:
                     # Scale active region coordinates using vectorized operation
-                    if scale_factor > 1:
+                    if annotation_scale_factor > 1:
                         active_regions = [
-                            rescale_points_vectorized(ar_points, scale_factor)
+                            rescale_points_vectorized(
+                                ar_points, annotation_scale_factor
+                            )
                             for ar_points in active_regions
                         ]
                     self.state.active_regions = active_regions
@@ -1788,14 +1816,23 @@ class MainWindow(QMainWindow):
                     annotations_loaded.append(f"{len(active_regions)} active region(s)")
 
                     # Update active shapes based on loaded ARs (but don't set selected yet)
+                    # Use vertex-inclusive containment check (matches filter_by_ar logic)
                     self.state.active_shape_ids = []
                     for i in range(len(self.state.shapes)):
-                        c = self.state.shapes[i].centroid()
+                        shape = self.state.shapes[i]
                         is_contained = False
                         for ar in self.state.active_regions:
-                            poly = QPolygonF(ar)
-                            if poly.containsPoint(c, Qt.OddEvenFill):
+                            ar_poly = QPolygonF(ar)
+                            # Check centroid first
+                            if ar_poly.containsPoint(shape.centroid(), Qt.OddEvenFill):
                                 is_contained = True
+                                break
+                            # Check vertices for boundary cells
+                            for pt in shape.points:
+                                if ar_poly.containsPoint(pt, Qt.OddEvenFill):
+                                    is_contained = True
+                                    break
+                            if is_contained:
                                 break
                         if is_contained:
                             self.state.active_shape_ids.append(i)
@@ -2870,6 +2907,14 @@ class MainWindow(QMainWindow):
                 [rescale_polygon(p) for p in all_polygons] if all_polygons else None
             )
 
+            # Scale image_shape to full resolution to match scaled coordinates
+            export_image_shape = image_shape
+            if image_shape is not None and scale_factor > 1:
+                export_image_shape = (
+                    int(image_shape[0] * scale_factor),
+                    int(image_shape[1] * scale_factor),
+                )
+
             # Export to SpatialData
             SpatialDataExporter.export_to_spatialdata(
                 input_path=input_path,
@@ -2877,7 +2922,7 @@ class MainWindow(QMainWindow):
                 selected_polygons=export_selected_polygons,
                 landmarks=export_landmarks,
                 active_regions=export_active_regions,
-                image_shape=image_shape,
+                image_shape=export_image_shape,
                 coordinate_system="global",
                 progress_callback=update_export_progress,
                 image_channels=image_channels,

@@ -36,6 +36,8 @@ View Controls
      - Toggle shape visibility (show/hide all shapes)
    * - ⌘/Ctrl + Shift + G
      - Toggle between label colors and gradient colors
+   * - ⌘/Ctrl + Shift + U
+     - Toggle abstract view (white background with shapes only)
 
 .. raw:: html
 
@@ -107,6 +109,7 @@ CellPick also provides a comprehensive menu bar for all operations:
 - Reset View
 - Show Shapes (⌘/Ctrl + Shift + L)
 - Show Gradient (⌘/Ctrl + Shift + G)
+- Abstract View (⌘/Ctrl + Shift + U)
 - Next Page
 
 **Calibration Menu**
