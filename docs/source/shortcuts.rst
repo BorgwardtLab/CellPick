@@ -54,8 +54,10 @@ Navigation
      - Action
    * - ⌘/Ctrl + F
      - Open search dialog
-   * - Scroll wheel
+   * - Mouse wheel / Pinch gesture
      - Zoom in/out
+   * - Two-finger scroll (trackpad)
+     - Pan the image
    * - Click + Drag
      - Pan the image
 
@@ -74,7 +76,11 @@ Mouse Controls
      - Effect
    * - Left-click + Drag
      - Pan the image view
-   * - Scroll wheel
+   * - Mouse wheel
+     - Zoom in/out
+   * - Two-finger scroll (trackpad)
+     - Pan the image view
+   * - Pinch gesture (trackpad)
      - Zoom in/out (centered on cursor)
    * - Right-click (selection mode)
      - Add point to landmark, active region, or calibration

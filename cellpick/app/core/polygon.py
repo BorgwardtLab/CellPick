@@ -118,14 +118,20 @@ class Polygon:
         Set the color of the polygon based on its score.
 
         If no score is set, uses magenta. Otherwise, uses a
-        gradient from red (low score) to green (high score).
+        blue to red gradient.
         """
         if (not isinstance(self.score, float)) or (not math.isfinite(self.score)):
             self.color = QColor(255, 0, 255)
             return
-        green = int(255 * self.score)
-        red = 255 - green
-        self.color = QColor(red, green, 0)
+
+        # Blue to red gradient
+        # Blue (score 0): #4575b4 (69, 117, 180)
+        # Red (score 1): #d73027 (215, 48, 39)
+        t = self.score
+        red = int(69 + (215 - 69) * t)
+        green = int(117 + (48 - 117) * t)
+        blue = int(180 + (39 - 180) * t)
+        self.color = QColor(red, green, blue)
 
     def centroid(self) -> QPointF:
         """

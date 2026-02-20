@@ -25,9 +25,9 @@ Gradient Scoring
 After adding **both** landmarks:
 
 - Each cell is automatically assigned a score based on its distance to both landmarks
-- Cells closer to landmark 1 receive a **lower score** (rendered in red)
-- Cells closer to landmark 2 receive a **higher score** (rendered in green)
-- Cells equidistant from both landmarks have a score near 0.5
+- Cells closer to landmark 1 receive a **lower score** (rendered in blue)
+- Cells closer to landmark 2 receive a **higher score** (rendered in red)
+- Cells equidistant from both landmarks have a score near 0.5 (rendered in purple)
 
 .. image:: ../_assets/workflow_step6_gradient.png
    :alt: Gradient assignment

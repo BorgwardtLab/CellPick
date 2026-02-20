@@ -1,14 +1,16 @@
 from typing import Any, List, Optional, Tuple
 
 import numpy as np
-from PySide6.QtCore import QPointF, QRectF, Qt
+from PySide6.QtCore import QPointF, QRectF, Qt, QEvent
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap, QPolygonF, QBrush
 from PySide6.QtWidgets import (
+    QGestureEvent,
     QGraphicsItem,
     QGraphicsPixmapItem,
     QGraphicsPolygonItem,
     QGraphicsScene,
     QGraphicsView,
+    QPinchGesture,
     QVBoxLayout,
     QWidget,
 )
@@ -27,10 +29,10 @@ ALPHA_DISABLED2 = 50
 
 class ZoomableGraphicsView(QGraphicsView):
     """
-    A QGraphicsView with mouse wheel zoom and pan functionality.
+    A QGraphicsView with pinch gesture zoom and pan functionality.
 
-    Provides smooth zooming centered on the mouse cursor and
-    pan navigation via drag mode.
+    Provides smooth zooming via trackpad pinch gestures (or mouse wheel)
+    centered on the cursor, and pan navigation via drag mode.
 
     Attributes
     ----------
@@ -69,6 +71,9 @@ class ZoomableGraphicsView(QGraphicsView):
         self.zoom_factor: float = 1.0
         self.max_zoom: float = 100.0
         self.setStyleSheet("background-color: black; border: none")
+        # Enable pinch gesture for trackpad zooming
+        self.grabGesture(Qt.GestureType.PinchGesture)
+        self.viewport().setAttribute(Qt.WidgetAttribute.WA_AcceptTouchEvents)
 
     def fit_in_view(self) -> None:
         """Fit the image in the view and reset zoom factor."""
@@ -109,17 +114,68 @@ class ZoomableGraphicsView(QGraphicsView):
             self.set_image(qimage)
 
     def wheelEvent(self, event) -> None:
-        """Handle mouse wheel for zooming."""
-        zoom_in_factor = 1.1
-        zoom_out_factor = 1 / zoom_in_factor
-        if event.angleDelta().y() > 0:
-            if self.zoom_factor * zoom_in_factor <= self.max_zoom:
-                self.zoom_factor *= zoom_in_factor
-                self.scale(zoom_in_factor, zoom_in_factor)
+        """Handle wheel events: mouse wheel for zoom, trackpad scroll for pan."""
+        pixel_delta = event.pixelDelta()
+        angle_delta = event.angleDelta()
+
+        # Detect trackpad vs mouse using event source
+        # MouseEventSynthesizedBySystem indicates trackpad/touchpad
+        from PySide6.QtCore import Qt as QtCore
+
+        source = event.source()
+        is_trackpad = source == QtCore.MouseEventSource.MouseEventSynthesizedBySystem
+
+        if is_trackpad and not pixel_delta.isNull():
+            # Trackpad: two-finger scroll for panning
+            pan_speed = 1.2  # 20% increased sensitivity
+            dx = pixel_delta.x() * pan_speed
+            dy = pixel_delta.y() * pan_speed
+
+            h_bar = self.horizontalScrollBar()
+            v_bar = self.verticalScrollBar()
+            h_bar.setValue(int(h_bar.value() - dx))
+            v_bar.setValue(int(v_bar.value() - dy))
         else:
-            if self.zoom_factor * zoom_out_factor >= 1.0:
-                self.zoom_factor *= zoom_out_factor
-                self.scale(zoom_out_factor, zoom_out_factor)
+            # Mouse wheel: zoom in/out
+            zoom_in_factor = 1.05
+            zoom_out_factor = 1 / zoom_in_factor
+            if angle_delta.y() > 0:
+                if self.zoom_factor * zoom_in_factor <= self.max_zoom:
+                    self.zoom_factor *= zoom_in_factor
+                    self.scale(zoom_in_factor, zoom_in_factor)
+            elif angle_delta.y() < 0:
+                if self.zoom_factor * zoom_out_factor >= 1.0:
+                    self.zoom_factor *= zoom_out_factor
+                    self.scale(zoom_out_factor, zoom_out_factor)
+
+        event.accept()
+
+    def event(self, event: QEvent) -> bool:
+        """Handle gesture events for pinch zoom."""
+        if event.type() == QEvent.Type.Gesture:
+            return self._gestureEvent(event)
+        return super().event(event)
+
+    def _gestureEvent(self, event: QGestureEvent) -> bool:
+        """Process pinch gestures for trackpad zooming."""
+        pinch = event.gesture(Qt.GestureType.PinchGesture)
+        if pinch:
+            self._handlePinchGesture(pinch)
+            return True
+        return False
+
+    def _handlePinchGesture(self, gesture: QPinchGesture) -> None:
+        """Apply pinch gesture zoom with adjusted sensitivity."""
+        change_flags = gesture.changeFlags()
+        if change_flags & QPinchGesture.ChangeFlag.ScaleFactorChanged:
+            scale_factor = gesture.scaleFactor()
+            # Sensitivity at 60% (20% increase from 50%)
+            adjusted_scale = 1.0 + (scale_factor - 1.0) * 0.6
+
+            new_zoom = self.zoom_factor * adjusted_scale
+            if 1.0 <= new_zoom <= self.max_zoom:
+                self.zoom_factor = new_zoom
+                self.scale(adjusted_scale, adjusted_scale)
 
 
 class ImageViewer(QWidget):
@@ -427,6 +483,10 @@ class ImageViewer(QWidget):
             color.setAlpha(max(30, color.alpha() // 3))
             fill_color.setAlpha(max(15, fill_color.alpha() // 3))
 
+        # In abstract view, cell edges are always black
+        if self._abstract_view_enabled:
+            color = QColor(0, 0, 0, color.alpha())
+
         return color, fill_color, base_pen_width
 
     def _rasterize_shapes(
@@ -693,11 +753,13 @@ class ImageViewer(QWidget):
         scaled_pen_w = max(0.5, 2 * pen_scale)
         poly_item = QGraphicsPolygonItem(QPolygonF(points))
         if len(self.landmark_items) == 0:
-            poly_item.setPen(QPen(Qt.red, scaled_pen_w))
-            poly_item.setBrush(QColor(255, 20, 20, 60))
+            # First landmark: RdYlBu blue - matches gradient start
+            poly_item.setPen(QPen(QColor(69, 117, 180), scaled_pen_w))
+            poly_item.setBrush(QColor(69, 117, 180, 120))
         else:
-            poly_item.setPen(QPen(Qt.green, scaled_pen_w))
-            poly_item.setBrush(QColor(20, 255, 20, 60))
+            # Second landmark: RdYlBu red - matches gradient end
+            poly_item.setPen(QPen(QColor(215, 48, 39), scaled_pen_w))
+            poly_item.setBrush(QColor(215, 48, 39, 120))
         poly_item.setZValue(
             4
         )  # Higher than shapes (z=3) so landmarks are visible on top
@@ -715,10 +777,11 @@ class ImageViewer(QWidget):
             self.graphics_view.scene.removeItem(poly_item)
             pen_scale = self.get_pen_scale()
             scaled_pen_w = max(0.5, 2 * pen_scale)
-            poly_item.setPen(QPen(Qt.red, scaled_pen_w))
-            poly_item.setBrush(QColor(255, 20, 20, 60))
+            # First landmark: RdYlBu blue - matches gradient start
+            poly_item.setPen(QPen(QColor(69, 117, 180), scaled_pen_w))
+            poly_item.setBrush(QColor(69, 117, 180, 120))
             poly_item.setZValue(2)
-            # and add it back, but in red
+            # and add it back, in RdYlBu blue
             self.graphics_view.scene.addItem(poly_item)
             self.landmark_items.append(poly_item)
 

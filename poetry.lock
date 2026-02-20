@@ -9844,4 +9844,4 @@ spatialdata = ["dask", "geopandas", "spatialdata", "spatialdata-io", "spatialdat
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.10,<3.14"
-content-hash = "61238a4940ce491f9baf3c5bfab7887df0fa8aa238fd87e5cf1c7969e844db70"
+content-hash = "484174e3f6e1832c171f8621f5ee3b3b869e1f4ae377e8349773afb44f87e510"
